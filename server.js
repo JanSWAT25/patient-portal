@@ -345,7 +345,18 @@ app.use(express.static(path.join(__dirname, 'client/build')));
 
 // Catch all handler for React app
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
+  // Check if the request is for an API endpoint
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  
+  // Serve React app for all other routes
+  const indexPath = path.join(__dirname, 'client/build', 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send('React build not found. Please ensure the build process completed successfully.');
+  }
 });
 
 app.listen(PORT, () => {
