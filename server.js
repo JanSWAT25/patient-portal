@@ -12,10 +12,13 @@ const { v4: uuidv4 } = require('uuid');
 const Database = require('better-sqlite3');
 const OpenAI = require('openai');
 
-// Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Initialize OpenAI (optional)
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+}
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -270,7 +273,7 @@ app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res
       const recordId = result.lastInsertRowid;
 
       // If it's a lab report, extract lab data
-      if (isLabReport && process.env.OPENAI_API_KEY) {
+      if (isLabReport && openai) {
         try {
           await extractLabDataFromText(extractedText, recordId, req.user.id);
         } catch (error) {
@@ -334,7 +337,7 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.single('pd
       const recordId = result.lastInsertRowid;
 
       // If it's a lab report, extract lab data
-      if (isLabReport && process.env.OPENAI_API_KEY) {
+      if (isLabReport && openai) {
         try {
           await extractLabDataFromText(extractedText, recordId, user_id);
         } catch (error) {
@@ -493,6 +496,11 @@ function extractNumericalData(text) {
 
 // AI-powered lab data extraction
 async function extractLabDataFromText(text, recordId, userId) {
+  if (!openai) {
+    console.log('OpenAI not configured - skipping lab data extraction');
+    return [];
+  }
+
   try {
     const prompt = `
     You are a medical data extraction specialist. Extract laboratory test results from the following text.
@@ -782,7 +790,7 @@ app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res
     deleteStmt.run(req.params.recordId);
 
     // Re-extract lab data
-    if (process.env.OPENAI_API_KEY) {
+    if (openai) {
       const labData = await extractLabDataFromText(record.extracted_data, req.params.recordId, req.user.id);
       res.json({ 
         message: 'Lab data re-extracted successfully',
