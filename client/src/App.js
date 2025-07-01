@@ -4,6 +4,7 @@ import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import AdminDashboard from './pages/AdminDashboard';
 import Upload from './pages/Upload';
 import Records from './pages/Records';
 import RecordDetail from './pages/RecordDetail';
@@ -11,7 +12,7 @@ import Navigation from './components/Navigation';
 import LoadingSpinner from './components/LoadingSpinner';
 
 function App() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, isAdmin } = useAuth();
 
   if (loading) {
     return <LoadingSpinner />;
@@ -29,6 +30,10 @@ function App() {
           <Route 
             path="/register" 
             element={isAuthenticated ? <Navigate to="/dashboard" /> : <Register />} 
+          />
+          <Route 
+            path="/admin" 
+            element={isAuthenticated && isAdmin ? <AdminDashboard /> : <Navigate to="/dashboard" />} 
           />
           <Route 
             path="/dashboard" 

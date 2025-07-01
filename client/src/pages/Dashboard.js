@@ -9,12 +9,13 @@ import {
   TrendingUp,
   Heart,
   Eye,
-  BarChart3
+  BarChart3,
+  Shield
 } from 'lucide-react';
 import axios from 'axios';
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [stats, setStats] = useState({
     totalRecords: 0,
     recentUploads: 0,
@@ -152,13 +153,26 @@ const Dashboard = () => {
             </div>
           </Link>
           
-          <div className="flex items-center p-4 border border-gray-200 rounded-lg bg-gray-50">
-            <TrendingUp className="h-6 w-6 text-gray-400 mr-3" />
-            <div>
-              <h3 className="font-medium text-gray-900">Analytics</h3>
-              <p className="text-sm text-gray-600">Coming soon</p>
+          {isAdmin ? (
+            <Link
+              to="/admin"
+              className="flex items-center p-4 border border-gray-200 rounded-lg hover:border-medical-300 hover:bg-medical-50 transition-colors duration-200"
+            >
+              <Shield className="h-6 w-6 text-medical-600 mr-3" />
+              <div>
+                <h3 className="font-medium text-gray-900">Admin Panel</h3>
+                <p className="text-sm text-gray-600">Manage users and system</p>
+              </div>
+            </Link>
+          ) : (
+            <div className="flex items-center p-4 border border-gray-200 rounded-lg bg-gray-50">
+              <TrendingUp className="h-6 w-6 text-gray-400 mr-3" />
+              <div>
+                <h3 className="font-medium text-gray-900">Analytics</h3>
+                <p className="text-sm text-gray-600">Coming soon</p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

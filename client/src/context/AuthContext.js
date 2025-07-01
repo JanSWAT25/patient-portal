@@ -30,7 +30,18 @@ export const AuthProvider = ({ children }) => {
   const verifyToken = async () => {
     try {
       const response = await axios.get('/api/records');
-      setUser(response.data.user || { id: 1, username: 'admin' }); // Fallback for demo
+      // For admin users, we need to get user info differently since they might not have records
+      if (response.data.user) {
+        setUser(response.data.user);
+      } else {
+        // Try to get user info from token
+        const tokenData = JSON.parse(atob(token.split('.')[1]));
+        setUser({
+          id: tokenData.id,
+          username: tokenData.username,
+          role: tokenData.role
+        });
+      }
     } catch (error) {
       console.error('Token verification failed:', error);
       logout();
@@ -90,7 +101,8 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     loading,
-    isAuthenticated: !!user
+    isAuthenticated: !!user,
+    isAdmin: user?.role === 'admin'
   };
 
   return (

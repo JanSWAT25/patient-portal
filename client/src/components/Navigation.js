@@ -8,14 +8,21 @@ import {
   LogOut, 
   User,
   Activity,
-  Heart
+  Heart,
+  Shield,
+  Users
 } from 'lucide-react';
 
 const Navigation = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const location = useLocation();
 
-  const navItems = [
+  const navItems = isAdmin ? [
+    { path: '/admin', label: 'Admin Dashboard', icon: Shield },
+    { path: '/dashboard', label: 'My Dashboard', icon: Home },
+    { path: '/upload', label: 'Upload Records', icon: UploadIcon },
+    { path: '/records', label: 'My Records', icon: FileText },
+  ] : [
     { path: '/dashboard', label: 'Dashboard', icon: Home },
     { path: '/upload', label: 'Upload Records', icon: UploadIcon },
     { path: '/records', label: 'My Records', icon: FileText },
@@ -65,6 +72,12 @@ const Navigation = () => {
               <div className="flex items-center space-x-2 text-sm text-gray-700">
                 <User className="h-4 w-4" />
                 <span>{user?.full_name || user?.username}</span>
+                {isAdmin && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-medical-100 text-medical-800">
+                    <Shield className="h-3 w-3 mr-1" />
+                    Admin
+                  </span>
+                )}
               </div>
               <button
                 onClick={logout}

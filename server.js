@@ -37,6 +37,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS users (
   password TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   full_name TEXT NOT NULL,
+  role TEXT DEFAULT 'user',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )`);
 
@@ -56,8 +57,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS pdf_records (
 
 // Create default admin user
 const adminPassword = bcrypt.hashSync('admin123', 10);
-const insertAdmin = db.prepare(`INSERT OR IGNORE INTO users (username, password, email, full_name) 
-        VALUES ('admin', ?, 'admin@medicalportal.com', 'Administrator')`);
+const insertAdmin = db.prepare(`INSERT OR IGNORE INTO users (username, password, email, full_name, role) 
+        VALUES ('admin', ?, 'admin@medicalportal.com', 'Administrator', 'admin')`);
 insertAdmin.run(adminPassword);
 
 // File upload configuration
@@ -107,6 +108,14 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Admin authorization middleware
+const requireAdmin = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+};
+
 // Routes
 
 // Login endpoint
@@ -127,7 +136,7 @@ app.post('/api/login', (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, username: user.username },
+      { id: user.id, username: user.username, role: user.role },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '24h' }
     );
@@ -138,7 +147,8 @@ app.post('/api/login', (req, res) => {
         id: user.id,
         username: user.username,
         email: user.email,
-        full_name: user.full_name
+        full_name: user.full_name,
+        role: user.role
       }
     });
   } catch (error) {
@@ -161,7 +171,7 @@ app.post('/api/register', (req, res) => {
     const result = stmt.run(username, hashedPassword, email, full_name);
 
     const token = jwt.sign(
-      { id: result.lastInsertRowid, username },
+      { id: result.lastInsertRowid, username, role: 'user' },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '24h' }
     );
@@ -172,7 +182,8 @@ app.post('/api/register', (req, res) => {
         id: result.lastInsertRowid,
         username,
         email,
-        full_name
+        full_name,
+        role: 'user'
       }
     });
   } catch (error) {
@@ -330,6 +341,103 @@ function extractNumericalData(text) {
 
   return matches;
 }
+
+// Admin Routes
+
+// Get all users (admin only)
+app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const stmt = db.prepare('SELECT id, username, email, full_name, role, created_at FROM users ORDER BY created_at DESC');
+    const users = stmt.all();
+    res.json(users);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get all records from all users (admin only)
+app.get('/api/admin/records', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        pr.*,
+        u.username,
+        u.full_name,
+        u.email
+      FROM pdf_records pr
+      JOIN users u ON pr.user_id = u.id
+      ORDER BY pr.upload_date DESC
+    `);
+    const records = stmt.all();
+    res.json(records);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get records for a specific user (admin only)
+app.get('/api/admin/users/:userId/records', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        pr.*,
+        u.username,
+        u.full_name,
+        u.email
+      FROM pdf_records pr
+      JOIN users u ON pr.user_id = u.id
+      WHERE pr.user_id = ?
+      ORDER BY pr.upload_date DESC
+    `);
+    const records = stmt.all(req.params.userId);
+    res.json(records);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Update user role (admin only)
+app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, (req, res) => {
+  const { role } = req.body;
+  
+  if (!role || !['admin', 'user'].includes(role)) {
+    return res.status(400).json({ error: 'Valid role required (admin or user)' });
+  }
+
+  try {
+    const stmt = db.prepare('UPDATE users SET role = ? WHERE id = ?');
+    const result = stmt.run(role, req.params.userId);
+    
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({ message: 'User role updated successfully' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Delete user (admin only)
+app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    // First delete all records for this user
+    const deleteRecords = db.prepare('DELETE FROM pdf_records WHERE user_id = ?');
+    deleteRecords.run(req.params.userId);
+    
+    // Then delete the user
+    const deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
+    const result = deleteUser.run(req.params.userId);
+    
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({ message: 'User and all associated records deleted successfully' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
 
 // Serve static files from React build
 app.use(express.static(path.join(__dirname, 'client/build')));
