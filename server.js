@@ -286,11 +286,12 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
 
         // Detect if this is a lab report
         const isLabReport = await detectLabReport(extractedText);
+        const isLabReportInt = isLabReport ? 1 : 0;
 
         // Store in database
         const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        const result = stmt.run(req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
+        const result = stmt.run(req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt);
 
         const recordId = result.lastInsertRowid;
 
@@ -380,11 +381,12 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
 
         // Detect if this is a lab report
         const isLabReport = await detectLabReport(extractedText);
+        const isLabReportInt = isLabReport ? 1 : 0;
 
         // Store in database
         const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        const result = stmt.run(user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
+        const result = stmt.run(user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt);
 
         const recordId = result.lastInsertRowid;
 
