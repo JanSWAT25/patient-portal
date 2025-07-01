@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -27,39 +27,38 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Database setup
-const db = new sqlite3.Database('./patient_portal.db');
+const db = new Database('./patient_portal.db');
 
 // Initialize database tables
-db.serialize(() => {
-  // Users table
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    full_name TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+// Users table
+db.exec(`CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
 
-  // PDF records table
-  db.run(`CREATE TABLE IF NOT EXISTS pdf_records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    filename TEXT NOT NULL,
-    original_name TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    file_size INTEGER,
-    upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-    record_type TEXT,
-    extracted_data TEXT,
-    FOREIGN KEY (user_id) REFERENCES users (id)
-  )`);
+// PDF records table
+db.exec(`CREATE TABLE IF NOT EXISTS pdf_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  filename TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  file_size INTEGER,
+  upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  record_type TEXT,
+  extracted_data TEXT,
+  FOREIGN KEY (user_id) REFERENCES users (id)
+)`);
 
-  // Create default admin user
-  const adminPassword = bcrypt.hashSync('admin123', 10);
-  db.run(`INSERT OR IGNORE INTO users (username, password, email, full_name) 
-          VALUES ('admin', ?, 'admin@medicalportal.com', 'Administrator')`, [adminPassword]);
-});
+// Create default admin user
+const adminPassword = bcrypt.hashSync('admin123', 10);
+const insertAdmin = db.prepare(`INSERT OR IGNORE INTO users (username, password, email, full_name) 
+        VALUES ('admin', ?, 'admin@medicalportal.com', 'Administrator')`);
+insertAdmin.run(adminPassword);
 
 // File upload configuration
 const storage = multer.diskStorage({
@@ -114,10 +113,10 @@ const authenticateToken = (req, res, next) => {
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
 
-  db.get('SELECT * FROM users WHERE username = ?', [username], (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
+  try {
+    const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
+    const user = stmt.get(username);
+    
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -142,7 +141,9 @@ app.post('/api/login', (req, res) => {
         full_name: user.full_name
       }
     });
-  });
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Register endpoint
@@ -155,34 +156,31 @@ app.post('/api/register', (req, res) => {
 
   const hashedPassword = bcrypt.hashSync(password, 10);
 
-  db.run(
-    'INSERT INTO users (username, password, email, full_name) VALUES (?, ?, ?, ?)',
-    [username, hashedPassword, email, full_name],
-    function(err) {
-      if (err) {
-        if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(400).json({ error: 'Username or email already exists' });
-        }
-        return res.status(500).json({ error: 'Database error' });
+  try {
+    const stmt = db.prepare('INSERT INTO users (username, password, email, full_name) VALUES (?, ?, ?, ?)');
+    const result = stmt.run(username, hashedPassword, email, full_name);
+
+    const token = jwt.sign(
+      { id: result.lastInsertRowid, username },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      token,
+      user: {
+        id: result.lastInsertRowid,
+        username,
+        email,
+        full_name
       }
-
-      const token = jwt.sign(
-        { id: this.lastID, username },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '24h' }
-      );
-
-      res.status(201).json({
-        token,
-        user: {
-          id: this.lastID,
-          username,
-          email,
-          full_name
-        }
-      });
+    });
+  } catch (error) {
+    if (error.message.includes('UNIQUE constraint failed')) {
+      return res.status(400).json({ error: 'Username or email already exists' });
     }
-  );
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Upload PDF endpoint
@@ -202,22 +200,19 @@ app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res
     const extractedText = pdfData.text;
 
     // Store in database
-    db.run(
-      `INSERT INTO pdf_records (user_id, filename, original_name, file_path, file_size, record_type, extracted_data) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText],
-      function(err) {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
+    try {
+      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, filename, original_name, file_path, file_size, record_type, extracted_data) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      const result = stmt.run(req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText);
 
-        res.status(201).json({
-          message: 'PDF uploaded successfully',
-          record_id: this.lastID,
-          filename: req.file.filename
-        });
-      }
-    );
+      res.status(201).json({
+        message: 'PDF uploaded successfully',
+        record_id: result.lastInsertRowid,
+        filename: req.file.filename
+      });
+    } catch (error) {
+      return res.status(500).json({ error: 'Database error' });
+    }
   } catch (error) {
     console.error('PDF processing error:', error);
     res.status(500).json({ error: 'PDF processing failed' });
@@ -226,33 +221,28 @@ app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res
 
 // Get user's PDF records
 app.get('/api/records', authenticateToken, (req, res) => {
-  db.all(
-    'SELECT * FROM pdf_records WHERE user_id = ? ORDER BY upload_date DESC',
-    [req.user.id],
-    (err, records) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json(records);
-    }
-  );
+  try {
+    const stmt = db.prepare('SELECT * FROM pdf_records WHERE user_id = ? ORDER BY upload_date DESC');
+    const records = stmt.all(req.user.id);
+    res.json(records);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Get specific PDF record
 app.get('/api/records/:id', authenticateToken, (req, res) => {
-  db.get(
-    'SELECT * FROM pdf_records WHERE id = ? AND user_id = ?',
-    [req.params.id, req.user.id],
-    (err, record) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      if (!record) {
-        return res.status(404).json({ error: 'Record not found' });
-      }
-      res.json(record);
+  try {
+    const stmt = db.prepare('SELECT * FROM pdf_records WHERE id = ? AND user_id = ?');
+    const record = stmt.get(req.params.id, req.user.id);
+    
+    if (!record) {
+      return res.status(404).json({ error: 'Record not found' });
     }
-  );
+    res.json(record);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // Serve PDF files
@@ -260,52 +250,54 @@ app.get('/api/pdf/:filename', authenticateToken, (req, res) => {
   const filePath = path.join(__dirname, 'uploads', req.params.filename);
   
   // Verify user has access to this file
-  db.get(
-    'SELECT * FROM pdf_records WHERE filename = ? AND user_id = ?',
-    [req.params.filename, req.user.id],
-    (err, record) => {
-      if (err || !record) {
-        return res.status(404).json({ error: 'File not found or access denied' });
-      }
-
-      if (fs.existsSync(filePath)) {
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `inline; filename="${record.original_name}"`);
-        fs.createReadStream(filePath).pipe(res);
-      } else {
-        res.status(404).json({ error: 'File not found' });
-      }
+  try {
+    const stmt = db.prepare('SELECT * FROM pdf_records WHERE filename = ? AND user_id = ?');
+    const record = stmt.get(req.params.filename, req.user.id);
+    
+    if (!record) {
+      return res.status(404).json({ error: 'File not found or access denied' });
     }
-  );
+
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${record.original_name}"`);
+      fs.createReadStream(filePath).pipe(res);
+    } else {
+      res.status(404).json({ error: 'File not found' });
+    }
+  } catch (error) {
+    return res.status(404).json({ error: 'File not found or access denied' });
+  }
 });
 
 // Extract and analyze data from PDF
 app.get('/api/analyze/:id', authenticateToken, (req, res) => {
-  db.get(
-    'SELECT * FROM pdf_records WHERE id = ? AND user_id = ?',
-    [req.params.id, req.user.id],
-    (err, record) => {
-      if (err || !record) {
-        return res.status(404).json({ error: 'Record not found' });
-      }
-
-      // Basic data extraction and analysis
-      const text = record.extracted_data;
-      const analysis = {
-        wordCount: text.split(/\s+/).length,
-        characterCount: text.length,
-        recordType: record.record_type,
-        uploadDate: record.upload_date,
-        fileSize: record.file_size,
-        // Extract common medical terms
-        medicalTerms: extractMedicalTerms(text),
-        // Extract potential numerical values
-        numericalData: extractNumericalData(text)
-      };
-
-      res.json(analysis);
+  try {
+    const stmt = db.prepare('SELECT * FROM pdf_records WHERE id = ? AND user_id = ?');
+    const record = stmt.get(req.params.id, req.user.id);
+    
+    if (!record) {
+      return res.status(404).json({ error: 'Record not found' });
     }
-  );
+
+    // Basic data extraction and analysis
+    const text = record.extracted_data;
+    const analysis = {
+      wordCount: text.split(/\s+/).length,
+      characterCount: text.length,
+      recordType: record.record_type,
+      uploadDate: record.upload_date,
+      fileSize: record.file_size,
+      // Extract common medical terms
+      medicalTerms: extractMedicalTerms(text),
+      // Extract potential numerical values
+      numericalData: extractNumericalData(text)
+    };
+
+    res.json(analysis);
+  } catch (error) {
+    return res.status(404).json({ error: 'Record not found' });
+  }
 });
 
 // Helper functions for data extraction
