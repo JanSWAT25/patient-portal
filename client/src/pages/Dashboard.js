@@ -165,13 +165,16 @@ const Dashboard = () => {
               </div>
             </Link>
           ) : (
-            <div className="flex items-center p-4 border border-gray-200 rounded-lg bg-gray-50">
-              <TrendingUp className="h-6 w-6 text-gray-400 mr-3" />
+            <Link
+              to="/lab-analytics"
+              className="flex items-center p-4 border border-gray-200 rounded-lg hover:border-medical-300 hover:bg-medical-50 transition-colors duration-200"
+            >
+              <TrendingUp className="h-6 w-6 text-medical-600 mr-3" />
               <div>
-                <h3 className="font-medium text-gray-900">Analytics</h3>
-                <p className="text-sm text-gray-600">Coming soon</p>
+                <h3 className="font-medium text-gray-900">Lab Analytics</h3>
+                <p className="text-sm text-gray-600">View lab trends and charts</p>
               </div>
-            </div>
+            </Link>
           )}
         </div>
       </div>

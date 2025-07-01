@@ -10,6 +10,12 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const Database = require('better-sqlite3');
+const OpenAI = require('openai');
+
+// Initialize OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -53,9 +59,49 @@ db.exec(`CREATE TABLE IF NOT EXISTS pdf_records (
   upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
   record_type TEXT,
   extracted_data TEXT,
+  is_lab_report BOOLEAN DEFAULT FALSE,
+  lab_data_extracted BOOLEAN DEFAULT FALSE,
   FOREIGN KEY (user_id) REFERENCES users (id),
   FOREIGN KEY (uploaded_by) REFERENCES users (id)
 )`);
+
+// Lab values table for storing extracted numerical data
+db.exec(`CREATE TABLE IF NOT EXISTS lab_values (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  record_id INTEGER,
+  test_name TEXT NOT NULL,
+  test_category TEXT,
+  value REAL,
+  unit TEXT,
+  reference_range TEXT,
+  is_abnormal BOOLEAN DEFAULT FALSE,
+  test_date DATETIME,
+  extraction_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  confidence_score REAL DEFAULT 0.0,
+  FOREIGN KEY (user_id) REFERENCES users (id),
+  FOREIGN KEY (record_id) REFERENCES pdf_records (id)
+)`);
+
+// Lab test categories for organization
+db.exec(`CREATE TABLE IF NOT EXISTS lab_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  color TEXT DEFAULT '#3B82F6'
+)`);
+
+// Insert default lab categories
+db.exec(`INSERT OR IGNORE INTO lab_categories (category_name, description, color) VALUES 
+  ('Hematology', 'Blood cell counts and hemoglobin', '#EF4444'),
+  ('Chemistry', 'Basic metabolic panel and electrolytes', '#10B981'),
+  ('Lipids', 'Cholesterol and triglycerides', '#F59E0B'),
+  ('Thyroid', 'TSH, T3, T4 levels', '#8B5CF6'),
+  ('Diabetes', 'Glucose and HbA1c', '#EC4899'),
+  ('Liver', 'Liver function tests', '#06B6D4'),
+  ('Kidney', 'Kidney function tests', '#84CC16'),
+  ('Other', 'Other laboratory tests', '#6B7280')
+`);
 
 // Create default admin user
 const adminPassword = bcrypt.hashSync('admin123', 10);
@@ -212,16 +258,31 @@ app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res
     const pdfData = await pdfParse(dataBuffer);
     const extractedText = pdfData.text;
 
+    // Detect if this is a lab report
+    const isLabReport = await detectLabReport(extractedText);
+
     // Store in database
     try {
-      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-      const result = stmt.run(req.user.id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText);
+      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const result = stmt.run(req.user.id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
+
+      const recordId = result.lastInsertRowid;
+
+      // If it's a lab report, extract lab data
+      if (isLabReport && process.env.OPENAI_API_KEY) {
+        try {
+          await extractLabDataFromText(extractedText, recordId, req.user.id);
+        } catch (error) {
+          console.error('Lab data extraction failed:', error);
+        }
+      }
 
       res.status(201).json({
         message: 'PDF uploaded successfully',
-        record_id: result.lastInsertRowid,
-        filename: req.file.filename
+        record_id: recordId,
+        filename: req.file.filename,
+        is_lab_report: isLabReport
       });
     } catch (error) {
       return res.status(500).json({ error: 'Database error' });
@@ -261,16 +322,31 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.single('pd
     const pdfData = await pdfParse(dataBuffer);
     const extractedText = pdfData.text;
 
+    // Detect if this is a lab report
+    const isLabReport = await detectLabReport(extractedText);
+
     // Store in database
     try {
-      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-      const result = stmt.run(user_id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText);
+      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const result = stmt.run(user_id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
+
+      const recordId = result.lastInsertRowid;
+
+      // If it's a lab report, extract lab data
+      if (isLabReport && process.env.OPENAI_API_KEY) {
+        try {
+          await extractLabDataFromText(extractedText, recordId, user_id);
+        } catch (error) {
+          console.error('Lab data extraction failed:', error);
+        }
+      }
 
       res.status(201).json({
         message: 'PDF uploaded successfully for user',
-        record_id: result.lastInsertRowid,
+        record_id: recordId,
         filename: req.file.filename,
+        is_lab_report: isLabReport,
         user: {
           id: user.id,
           username: user.username,
@@ -415,6 +491,107 @@ function extractNumericalData(text) {
   return matches;
 }
 
+// AI-powered lab data extraction
+async function extractLabDataFromText(text, recordId, userId) {
+  try {
+    const prompt = `
+    You are a medical data extraction specialist. Extract laboratory test results from the following text.
+    
+    Return ONLY a JSON array of objects with this exact structure:
+    [
+      {
+        "test_name": "Test name (e.g., Hemoglobin, Glucose, Cholesterol)",
+        "test_category": "Category (Hematology, Chemistry, Lipids, Thyroid, Diabetes, Liver, Kidney, Other)",
+        "value": numeric_value,
+        "unit": "unit (mg/dL, mmol/L, g/dL, etc.)",
+        "reference_range": "normal range (e.g., 12.0-15.5 g/dL)",
+        "is_abnormal": boolean,
+        "test_date": "YYYY-MM-DD if found, otherwise null"
+      }
+    ]
+    
+    Only include tests with numerical values. If no lab data is found, return an empty array.
+    
+    Text to analyze:
+    ${text.substring(0, 8000)} // Limit text length for API
+    `;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        {
+          role: "system",
+          content: "You are a medical data extraction specialist. Extract only laboratory test results with numerical values and return them in the specified JSON format."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 2000
+    });
+
+    const response = completion.choices[0].message.content;
+    const labData = JSON.parse(response);
+
+    // Store extracted data in database
+    if (Array.isArray(labData) && labData.length > 0) {
+      const insertStmt = db.prepare(`
+        INSERT INTO lab_values 
+        (user_id, record_id, test_name, test_category, value, unit, reference_range, is_abnormal, test_date, confidence_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const lab of labData) {
+        insertStmt.run(
+          userId,
+          recordId,
+          lab.test_name,
+          lab.test_category,
+          lab.value,
+          lab.unit,
+          lab.reference_range,
+          lab.is_abnormal,
+          lab.test_date,
+          0.9 // High confidence for AI extraction
+        );
+      }
+
+      // Mark record as lab data extracted
+      const updateStmt = db.prepare('UPDATE pdf_records SET lab_data_extracted = TRUE WHERE id = ?');
+      updateStmt.run(recordId);
+    }
+
+    return labData;
+  } catch (error) {
+    console.error('Error extracting lab data:', error);
+    return [];
+  }
+}
+
+// Detect if PDF is a lab report
+async function detectLabReport(text) {
+  try {
+    const labKeywords = [
+      'laboratory', 'lab', 'blood test', 'chemistry', 'hematology',
+      'hemoglobin', 'glucose', 'cholesterol', 'creatinine', 'bun',
+      'sodium', 'potassium', 'chloride', 'bicarbonate', 'calcium',
+      'albumin', 'bilirubin', 'alt', 'ast', 'alkaline phosphatase',
+      'tsh', 't3', 't4', 'hba1c', 'platelets', 'white blood cells',
+      'red blood cells', 'wbc', 'rbc', 'hct', 'mcv', 'mch', 'mchc'
+    ];
+
+    const textLower = text.toLowerCase();
+    const matches = labKeywords.filter(keyword => textLower.includes(keyword));
+    
+    return matches.length >= 3; // If 3 or more lab keywords found, consider it a lab report
+  } catch (error) {
+    console.error('Error detecting lab report:', error);
+    return false;
+  }
+}
+
 // Admin Routes
 
 // Get all users (admin only)
@@ -494,7 +671,11 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, (req, 
 // Delete user (admin only)
 app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, res) => {
   try {
-    // First delete all records for this user
+    // First delete all lab values for this user
+    const deleteLabValues = db.prepare('DELETE FROM lab_values WHERE user_id = ?');
+    deleteLabValues.run(req.params.userId);
+    
+    // Then delete all records for this user
     const deleteRecords = db.prepare('DELETE FROM pdf_records WHERE user_id = ?');
     deleteRecords.run(req.params.userId);
     
@@ -507,6 +688,109 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, re
     }
     
     res.json({ message: 'User and all associated records deleted successfully' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Lab Data Routes
+
+// Get user's lab values
+app.get('/api/lab-values', authenticateToken, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        lv.*,
+        pr.original_name as record_name,
+        pr.upload_date
+      FROM lab_values lv
+      LEFT JOIN pdf_records pr ON lv.record_id = pr.id
+      WHERE lv.user_id = ?
+      ORDER BY lv.test_date DESC, lv.extraction_date DESC
+    `);
+    const labValues = stmt.all(req.user.id);
+    res.json(labValues);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get lab values by test name (for trending)
+app.get('/api/lab-values/:testName', authenticateToken, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        lv.*,
+        pr.original_name as record_name,
+        pr.upload_date
+      FROM lab_values lv
+      LEFT JOIN pdf_records pr ON lv.record_id = pr.id
+      WHERE lv.user_id = ? AND lv.test_name LIKE ?
+      ORDER BY lv.test_date ASC, lv.extraction_date ASC
+    `);
+    const labValues = stmt.all(req.user.id, `%${req.params.testName}%`);
+    res.json(labValues);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get lab categories
+app.get('/api/lab-categories', authenticateToken, (req, res) => {
+  try {
+    const stmt = db.prepare('SELECT * FROM lab_categories ORDER BY category_name');
+    const categories = stmt.all();
+    res.json(categories);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get lab values by category
+app.get('/api/lab-values/category/:category', authenticateToken, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        lv.*,
+        pr.original_name as record_name,
+        pr.upload_date
+      FROM lab_values lv
+      LEFT JOIN pdf_records pr ON lv.record_id = pr.id
+      WHERE lv.user_id = ? AND lv.test_category = ?
+      ORDER BY lv.test_date DESC, lv.extraction_date DESC
+    `);
+    const labValues = stmt.all(req.user.id, req.params.category);
+    res.json(labValues);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Re-extract lab data from existing record
+app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res) => {
+  try {
+    // Get the record
+    const recordStmt = db.prepare('SELECT * FROM pdf_records WHERE id = ? AND user_id = ?');
+    const record = recordStmt.get(req.params.recordId, req.user.id);
+    
+    if (!record) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    // Delete existing lab values for this record
+    const deleteStmt = db.prepare('DELETE FROM lab_values WHERE record_id = ?');
+    deleteStmt.run(req.params.recordId);
+
+    // Re-extract lab data
+    if (process.env.OPENAI_API_KEY) {
+      const labData = await extractLabDataFromText(record.extracted_data, req.params.recordId, req.user.id);
+      res.json({ 
+        message: 'Lab data re-extracted successfully',
+        extracted_tests: labData.length
+      });
+    } else {
+      res.status(400).json({ error: 'OpenAI API key not configured' });
+    }
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }

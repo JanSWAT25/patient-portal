@@ -8,6 +8,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import Upload from './pages/Upload';
 import Records from './pages/Records';
 import RecordDetail from './pages/RecordDetail';
+import LabAnalytics from './pages/LabAnalytics';
 import Navigation from './components/Navigation';
 import LoadingSpinner from './components/LoadingSpinner';
 
@@ -50,6 +51,10 @@ function App() {
           <Route 
             path="/records/:id" 
             element={isAuthenticated ? <RecordDetail /> : <Navigate to="/login" />} 
+          />
+          <Route 
+            path="/lab-analytics" 
+            element={isAuthenticated ? <LabAnalytics /> : <Navigate to="/login" />} 
           />
           <Route 
             path="/" 

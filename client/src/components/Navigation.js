@@ -10,7 +10,8 @@ import {
   Activity,
   Heart,
   Shield,
-  Users
+  Users,
+  TrendingUp
 } from 'lucide-react';
 
 const Navigation = () => {
@@ -22,10 +23,12 @@ const Navigation = () => {
     { path: '/dashboard', label: 'My Dashboard', icon: Home },
     { path: '/upload', label: 'Upload Records', icon: UploadIcon },
     { path: '/records', label: 'My Records', icon: FileText },
+    { path: '/lab-analytics', label: 'Lab Analytics', icon: TrendingUp },
   ] : [
     { path: '/dashboard', label: 'Dashboard', icon: Home },
     { path: '/upload', label: 'Upload Records', icon: UploadIcon },
     { path: '/records', label: 'My Records', icon: FileText },
+    { path: '/lab-analytics', label: 'Lab Analytics', icon: TrendingUp },
   ];
 
   const isActive = (path) => location.pathname === path;
