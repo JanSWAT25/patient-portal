@@ -1,14 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { 
   FileText, 
   Search, 
   Filter, 
-  Download
+  Download,
+  User,
+  Shield
 } from 'lucide-react';
 import axios from 'axios';
 
 const Records = () => {
+  const { user } = useAuth();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -121,6 +125,21 @@ const Records = () => {
                     <span>{record.record_type || 'Unknown Type'}</span>
                     <span>{formatDate(record.upload_date)}</span>
                     <span>Size: {formatFileSize(record.file_size)}</span>
+                    {record.uploaded_by_username && (
+                      <span className="flex items-center">
+                        {record.uploaded_by_username === user?.username ? (
+                          <>
+                            <User className="h-3 w-3 mr-1" />
+                            Uploaded by you
+                          </>
+                        ) : (
+                          <>
+                            <Shield className="h-3 w-3 mr-1" />
+                            Uploaded by admin
+                          </>
+                        )}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="mt-3 md:mt-0 md:ml-6 flex-shrink-0">

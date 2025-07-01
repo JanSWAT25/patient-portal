@@ -45,6 +45,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS users (
 db.exec(`CREATE TABLE IF NOT EXISTS pdf_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER,
+  uploaded_by INTEGER,
   filename TEXT NOT NULL,
   original_name TEXT NOT NULL,
   file_path TEXT NOT NULL,
@@ -52,7 +53,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS pdf_records (
   upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
   record_type TEXT,
   extracted_data TEXT,
-  FOREIGN KEY (user_id) REFERENCES users (id)
+  FOREIGN KEY (user_id) REFERENCES users (id),
+  FOREIGN KEY (uploaded_by) REFERENCES users (id)
 )`);
 
 // Create default admin user
@@ -212,9 +214,9 @@ app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res
 
     // Store in database
     try {
-      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, filename, original_name, file_path, file_size, record_type, extracted_data) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`);
-      const result = stmt.run(req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText);
+      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+      const result = stmt.run(req.user.id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText);
 
       res.status(201).json({
         message: 'PDF uploaded successfully',
@@ -230,10 +232,73 @@ app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res
   }
 });
 
+// Admin upload PDF for specific user endpoint
+app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const { record_type, user_id } = req.body;
+    
+    if (!user_id) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    // Verify user exists
+    const userStmt = db.prepare('SELECT * FROM users WHERE id = ?');
+    const user = userStmt.get(user_id);
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const filePath = req.file.path;
+    const fileSize = req.file.size;
+
+    // Extract text from PDF
+    const dataBuffer = fs.readFileSync(filePath);
+    const pdfData = await pdfParse(dataBuffer);
+    const extractedText = pdfData.text;
+
+    // Store in database
+    try {
+      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+      const result = stmt.run(user_id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText);
+
+      res.status(201).json({
+        message: 'PDF uploaded successfully for user',
+        record_id: result.lastInsertRowid,
+        filename: req.file.filename,
+        user: {
+          id: user.id,
+          username: user.username,
+          full_name: user.full_name
+        }
+      });
+    } catch (error) {
+      return res.status(500).json({ error: 'Database error' });
+    }
+  } catch (error) {
+    console.error('PDF processing error:', error);
+    res.status(500).json({ error: 'PDF processing failed' });
+  }
+});
+
 // Get user's PDF records
 app.get('/api/records', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare('SELECT * FROM pdf_records WHERE user_id = ? ORDER BY upload_date DESC');
+    const stmt = db.prepare(`
+      SELECT 
+        pr.*,
+        u.username as uploaded_by_username,
+        u.full_name as uploaded_by_name
+      FROM pdf_records pr
+      LEFT JOIN users u ON pr.uploaded_by = u.id
+      WHERE pr.user_id = ? 
+      ORDER BY pr.upload_date DESC
+    `);
     const records = stmt.all(req.user.id);
     res.json(records);
   } catch (error) {
@@ -244,7 +309,15 @@ app.get('/api/records', authenticateToken, (req, res) => {
 // Get specific PDF record
 app.get('/api/records/:id', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare('SELECT * FROM pdf_records WHERE id = ? AND user_id = ?');
+    const stmt = db.prepare(`
+      SELECT 
+        pr.*,
+        u.username as uploaded_by_username,
+        u.full_name as uploaded_by_name
+      FROM pdf_records pr
+      LEFT JOIN users u ON pr.uploaded_by = u.id
+      WHERE pr.id = ? AND pr.user_id = ?
+    `);
     const record = stmt.get(req.params.id, req.user.id);
     
     if (!record) {

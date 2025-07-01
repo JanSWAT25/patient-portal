@@ -11,7 +11,9 @@ import {
   Shield,
   BarChart3,
   Activity,
-  Calendar
+  Calendar,
+  Upload,
+  Download
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -27,6 +29,13 @@ const AdminDashboard = () => {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadData, setUploadData] = useState({
+    user_id: '',
+    record_type: '',
+    file: null
+  });
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     fetchAdminData();
@@ -90,6 +99,39 @@ const AdminDashboard = () => {
       } catch (error) {
         console.error('Error deleting user:', error);
       }
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    e.preventDefault();
+    
+    if (!uploadData.user_id || !uploadData.record_type || !uploadData.file) {
+      alert('Please fill in all fields and select a file');
+      return;
+    }
+
+    setUploading(true);
+    const formData = new FormData();
+    formData.append('pdf', uploadData.file);
+    formData.append('user_id', uploadData.user_id);
+    formData.append('record_type', uploadData.record_type);
+
+    try {
+      await axios.post('/api/admin/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      
+      alert('File uploaded successfully!');
+      setShowUploadModal(false);
+      setUploadData({ user_id: '', record_type: '', file: null });
+      fetchAdminData(); // Refresh data
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Upload failed: ' + (error.response?.data?.error || 'Unknown error'));
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -200,6 +242,13 @@ const AdminDashboard = () => {
               icon={FileText}
               isActive={activeTab === 'records'}
             />
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="flex items-center px-4 py-2 rounded-lg font-medium bg-medical-600 text-white hover:bg-medical-700 transition-colors duration-200"
+            >
+              <Upload className="h-5 w-5 mr-2" />
+              Upload File
+            </button>
           </div>
         </div>
 
@@ -399,6 +448,97 @@ const AdminDashboard = () => {
           )}
         </div>
       </div>
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Upload File for User</h3>
+              <button
+                onClick={() => setShowUploadModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <form onSubmit={handleFileUpload}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Select User
+                  </label>
+                  <select
+                    value={uploadData.user_id}
+                    onChange={(e) => setUploadData({...uploadData, user_id: e.target.value})}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500"
+                    required
+                  >
+                    <option value="">Choose a user...</option>
+                    {users.map(user => (
+                      <option key={user.id} value={user.id}>
+                        {user.full_name} ({user.username})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Record Type
+                  </label>
+                  <select
+                    value={uploadData.record_type}
+                    onChange={(e) => setUploadData({...uploadData, record_type: e.target.value})}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500"
+                    required
+                  >
+                    <option value="">Select record type...</option>
+                    <option value="ECG">ECG</option>
+                    <option value="Echocardiography">Echocardiography</option>
+                    <option value="CT Scan">CT Scan</option>
+                    <option value="MRI">MRI</option>
+                    <option value="Blood Test">Blood Test</option>
+                    <option value="X-Ray">X-Ray</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    PDF File
+                  </label>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={(e) => setUploadData({...uploadData, file: e.target.files[0]})}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500"
+                    required
+                  />
+                </div>
+              </div>
+              
+              <div className="flex justify-end space-x-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setShowUploadModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors duration-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploading}
+                  className="px-4 py-2 text-sm font-medium text-white bg-medical-600 rounded-md hover:bg-medical-700 disabled:opacity-50 transition-colors duration-200"
+                >
+                  {uploading ? 'Uploading...' : 'Upload'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
