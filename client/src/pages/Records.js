@@ -4,10 +4,7 @@ import {
   FileText, 
   Search, 
   Filter, 
-  Calendar,
-  Download,
-  Eye,
-  BarChart3
+  Download
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -106,80 +103,42 @@ const Records = () => {
         </div>
       </div>
 
-      {/* Records Grid */}
-      {filteredRecords.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-md p-12 text-center">
-          <FileText className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            {records.length === 0 ? 'No records yet' : 'No records found'}
-          </h3>
-          <p className="text-gray-600 mb-6">
-            {records.length === 0 
-              ? 'Start by uploading your first medical record'
-              : 'Try adjusting your search or filter criteria'
-            }
-          </p>
-          {records.length === 0 && (
-            <Link
-              to="/upload"
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-medical-600 hover:bg-medical-700 transition-colors duration-200"
-            >
-              Upload First Record
-            </Link>
-          )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredRecords.map((record) => (
-            <div key={record.id} className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200">
-              <div className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center">
-                    <FileText className="h-8 w-8 text-medical-600 mr-3" />
-                    <div>
-                      <h3 className="font-medium text-gray-900 truncate">
-                        {record.original_name}
-                      </h3>
-                      <p className="text-sm text-gray-500">
-                        {record.record_type || 'Unknown Type'}
-                      </p>
-                    </div>
+      {/* Records List */}
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Records</h2>
+        {filteredRecords.length === 0 ? (
+          <div className="text-gray-500 text-center py-8">No records found.</div>
+        ) : (
+          <ul className="divide-y divide-gray-200">
+            {filteredRecords.map((record) => (
+              <li key={record.id} className="flex flex-col md:flex-row md:items-center justify-between py-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center space-x-3">
+                    <FileText className="h-6 w-6 text-medical-600 flex-shrink-0" />
+                    <span className="font-medium text-gray-900 truncate">{record.original_name}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-gray-500 flex flex-wrap gap-4">
+                    <span>{record.record_type || 'Unknown Type'}</span>
+                    <span>{formatDate(record.upload_date)}</span>
+                    <span>Size: {formatFileSize(record.file_size)}</span>
                   </div>
                 </div>
-
-                <div className="space-y-2 mb-4">
-                  <div className="flex items-center text-sm text-gray-600">
-                    <Calendar className="h-4 w-4 mr-2" />
-                    {formatDate(record.upload_date)}
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Size: {formatFileSize(record.file_size)}
-                  </div>
-                </div>
-
-                <div className="flex space-x-2">
-                  <Link
-                    to={`/records/${record.id}`}
-                    className="flex-1 flex items-center justify-center px-3 py-2 border border-medical-300 text-sm font-medium rounded-md text-medical-700 bg-medical-50 hover:bg-medical-100 transition-colors duration-200"
-                  >
-                    <Eye className="h-4 w-4 mr-1" />
-                    View
-                  </Link>
+                <div className="mt-3 md:mt-0 md:ml-6 flex-shrink-0">
                   <a
                     href={`/api/pdf/${record.filename}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 flex items-center justify-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors duration-200"
+                    className="inline-flex items-center px-4 py-2 border border-medical-300 text-sm font-medium rounded-md text-medical-700 bg-medical-50 hover:bg-medical-100"
                   >
-                    <Download className="h-4 w-4 mr-1" />
+                    <Download className="h-4 w-4 mr-2" />
                     Download
                   </a>
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {/* Summary Stats */}
       {records.length > 0 && (
