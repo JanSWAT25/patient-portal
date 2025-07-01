@@ -108,7 +108,7 @@ const Dashboard = () => {
         <StatCard
           title="Recent Uploads"
           value={stats.recentUploads}
-          icon={Upload}
+          icon={UploadIcon}
           color="border-green-500"
           link="/records"
         />
@@ -134,7 +134,7 @@ const Dashboard = () => {
             to="/upload"
             className="flex items-center p-4 border border-gray-200 rounded-lg hover:border-medical-300 hover:bg-medical-50 transition-colors duration-200"
           >
-            <Upload className="h-6 w-6 text-medical-600 mr-3" />
+            <UploadIcon className="h-6 w-6 text-medical-600 mr-3" />
             <div>
               <h3 className="font-medium text-gray-900">Upload New Record</h3>
               <p className="text-sm text-gray-600">Add a new medical document</p>
