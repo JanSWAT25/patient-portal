@@ -23,10 +23,33 @@ const RecordDetail = () => {
   const [loading, setLoading] = useState(true);
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
+  const [pdfUrl, setPdfUrl] = useState(null);
 
   useEffect(() => {
     fetchRecordDetails();
   }, [id]);
+
+  useEffect(() => {
+    // Fetch PDF as blob and create object URL
+    const fetchPdf = async () => {
+      if (record && record.filename) {
+        try {
+          const response = await fetch(`/api/pdf/${record.filename}`);
+          if (!response.ok) throw new Error('Failed to fetch PDF');
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          setPdfUrl(url);
+        } catch (e) {
+          setPdfUrl(null);
+        }
+      }
+    };
+    fetchPdf();
+    return () => {
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    };
+    // eslint-disable-next-line
+  }, [record]);
 
   const fetchRecordDetails = async () => {
     try {
@@ -134,18 +157,21 @@ const RecordDetail = () => {
           </h2>
           
           <div className="border border-gray-200 rounded-lg p-4">
-            <Document
-              file={`/api/pdf/${record.filename}`}
-              onLoadSuccess={onDocumentLoadSuccess}
-              className="flex justify-center"
-            >
-              <Page 
-                pageNumber={pageNumber} 
-                width={400}
-                className="shadow-lg"
-              />
-            </Document>
-            
+            {pdfUrl ? (
+              <Document
+                file={pdfUrl}
+                onLoadSuccess={onDocumentLoadSuccess}
+                className="flex justify-center"
+              >
+                <Page 
+                  pageNumber={pageNumber} 
+                  width={400}
+                  className="shadow-lg"
+                />
+              </Document>
+            ) : (
+              <div className="text-center text-gray-500">Failed to load PDF file.</div>
+            )}
             {numPages && (
               <div className="mt-4 flex items-center justify-center space-x-4">
                 <button
