@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Document, Page, pdfjs } from 'react-pdf';
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.entry';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { 
   ArrowLeft, 
@@ -14,43 +12,15 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 
-// Set up PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
-
 const RecordDetail = () => {
   const { id } = useParams();
   const [record, setRecord] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [numPages, setNumPages] = useState(null);
-  const [pageNumber, setPageNumber] = useState(1);
-  const [pdfUrl, setPdfUrl] = useState(null);
 
   useEffect(() => {
     fetchRecordDetails();
   }, [id]);
-
-  useEffect(() => {
-    // Fetch PDF as blob and create object URL
-    const fetchPdf = async () => {
-      if (record && record.filename) {
-        try {
-          const response = await fetch(`/api/pdf/${record.filename}`);
-          if (!response.ok) throw new Error('Failed to fetch PDF');
-          const blob = await response.blob();
-          const url = URL.createObjectURL(blob);
-          setPdfUrl(url);
-        } catch (e) {
-          setPdfUrl(null);
-        }
-      }
-    };
-    fetchPdf();
-    return () => {
-      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-    };
-    // eslint-disable-next-line
-  }, [record]);
 
   const fetchRecordDetails = async () => {
     try {
@@ -66,10 +36,6 @@ const RecordDetail = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const onDocumentLoadSuccess = ({ numPages }) => {
-    setNumPages(numPages);
   };
 
   const formatFileSize = (bytes) => {
@@ -150,50 +116,22 @@ const RecordDetail = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* PDF Viewer */}
+        {/* PDF Download Only */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
             <FileText className="h-5 w-5 mr-2" />
-            Document Viewer
+            Document
           </h2>
-          
-          <div className="border border-gray-200 rounded-lg p-4">
-            {pdfUrl ? (
-              <Document
-                file={pdfUrl}
-                onLoadSuccess={onDocumentLoadSuccess}
-                className="flex justify-center"
-              >
-                <Page 
-                  pageNumber={pageNumber} 
-                  width={400}
-                  className="shadow-lg"
-                />
-              </Document>
-            ) : (
-              <div className="text-center text-gray-500">Failed to load PDF file.</div>
-            )}
-            {numPages && (
-              <div className="mt-4 flex items-center justify-center space-x-4">
-                <button
-                  onClick={() => setPageNumber(Math.max(1, pageNumber - 1))}
-                  disabled={pageNumber <= 1}
-                  className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
-                >
-                  Previous
-                </button>
-                <span className="text-sm text-gray-600">
-                  Page {pageNumber} of {numPages}
-                </span>
-                <button
-                  onClick={() => setPageNumber(Math.min(numPages, pageNumber + 1))}
-                  disabled={pageNumber >= numPages}
-                  className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </div>
-            )}
+          <div className="border border-gray-200 rounded-lg p-4 text-center">
+            <a
+              href={`/api/pdf/${record.filename}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center px-4 py-2 border border-medical-300 text-sm font-medium rounded-md text-medical-700 bg-medical-50 hover:bg-medical-100"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Download PDF
+            </a>
           </div>
         </div>
 
