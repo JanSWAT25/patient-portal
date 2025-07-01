@@ -266,7 +266,10 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    const { record_type } = req.body;
+    let record_type = req.body.record_type;
+    if (Array.isArray(record_type)) {
+      record_type = record_type[0];
+    }
     const results = [];
     const errors = [];
 
@@ -343,7 +346,11 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    const { record_type, user_id } = req.body;
+    let record_type = req.body.record_type;
+    if (Array.isArray(record_type)) {
+      record_type = record_type[0];
+    }
+    const { user_id } = req.body;
     
     if (!user_id) {
       return res.status(400).json({ error: 'User ID is required' });
