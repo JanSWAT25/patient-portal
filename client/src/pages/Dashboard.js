@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   FileText, 
-  Upload, 
+  Upload as UploadIcon, 
   Activity, 
   Calendar,
   TrendingUp,
@@ -174,7 +174,7 @@ const Dashboard = () => {
               to="/upload"
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-medical-600 hover:bg-medical-700 transition-colors duration-200"
             >
-              <Upload className="h-4 w-4 mr-2" />
+              <UploadIcon className="h-4 w-4 mr-2" />
               Upload First Record
             </Link>
           </div>

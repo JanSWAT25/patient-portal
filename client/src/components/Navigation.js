@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   Home, 
-  Upload, 
+  Upload as UploadIcon, 
   FileText, 
   LogOut, 
   User,
@@ -17,7 +17,7 @@ const Navigation = () => {
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: Home },
-    { path: '/upload', label: 'Upload Records', icon: Upload },
+    { path: '/upload', label: 'Upload Records', icon: UploadIcon },
     { path: '/records', label: 'My Records', icon: FileText },
   ];
 

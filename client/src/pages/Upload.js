@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, AlertCircle, CheckCircle, X } from 'lucide-react';
+import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, X } from 'lucide-react';
 import axios from 'axios';
 
 const Upload = () => {
@@ -100,7 +100,7 @@ const Upload = () => {
           }`}
         >
           <input {...getInputProps()} />
-          <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+          <UploadIcon className="mx-auto h-12 w-12 text-gray-400 mb-4" />
           {isDragActive ? (
             <p className="text-medical-600 font-medium">Drop the PDF file here...</p>
           ) : (
