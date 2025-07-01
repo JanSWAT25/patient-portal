@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.entry';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { 
   ArrowLeft, 
@@ -14,7 +15,7 @@ import {
 import axios from 'axios';
 
 // Set up PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `${process.env.PUBLIC_URL}/pdf.worker.js`;
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const RecordDetail = () => {
   const { id } = useParams();
