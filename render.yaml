@@ -2,21 +2,7 @@ services:
   - type: web
     name: patient-portal
     env: node
-    buildCommand: |
-      echo "Starting custom build process..."
-      npm install
-      echo "Backend dependencies installed"
-      cd client
-      echo "Installing client dependencies..."
-      npm install
-      echo "Building React app..."
-      npm run build
-      echo "Build completed"
-      cd ..
-      echo "Build process finished"
-      ls -la client/build/
-      echo "Running build verification..."
-      node verify-build.js
+    buildCommand: chmod +x build-for-render.sh && ./build-for-render.sh
     startCommand: npm start
     envVars:
       - key: NODE_ENV
