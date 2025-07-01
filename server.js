@@ -246,28 +246,27 @@ app.get('/api/records/:id', authenticateToken, (req, res) => {
 });
 
 // Serve PDF files
-app.get('/api/pdf/:filename', authenticateToken, (req, res) => {
+app.get('/api/pdf/:filename', (req, res) => {
   const filePath = path.join(__dirname, 'uploads', req.params.filename);
   
-  // Verify user has access to this file
-  try {
-    const stmt = db.prepare('SELECT * FROM pdf_records WHERE filename = ? AND user_id = ?');
-    const record = stmt.get(req.params.filename, req.user.id);
-    
-    if (!record) {
-      return res.status(404).json({ error: 'File not found or access denied' });
-    }
-
-    if (fs.existsSync(filePath)) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${record.original_name}"`);
-      fs.createReadStream(filePath).pipe(res);
-    } else {
-      res.status(404).json({ error: 'File not found' });
-    }
-  } catch (error) {
-    return res.status(404).json({ error: 'File not found or access denied' });
+  // Verify file exists
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found' });
   }
+
+  // Try to find the record for original name (optional, fallback to filename)
+  let originalName = req.params.filename;
+  try {
+    const stmt = db.prepare('SELECT * FROM pdf_records WHERE filename = ?');
+    const record = stmt.get(req.params.filename);
+    if (record && record.original_name) {
+      originalName = record.original_name;
+    }
+  } catch (e) {}
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${originalName}"`);
+  fs.createReadStream(filePath).pipe(res);
 });
 
 // Extract and analyze data from PDF
