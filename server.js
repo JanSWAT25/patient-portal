@@ -333,16 +333,7 @@ function extractNumericalData(text) {
 }
 
 // Serve static files from React build
-const buildPath = path.join(__dirname, 'client/build');
-console.log('Build path:', buildPath);
-console.log('Build directory exists:', fs.existsSync(buildPath));
-
-if (fs.existsSync(buildPath)) {
-  console.log('Build directory contents:', fs.readdirSync(buildPath));
-  app.use(express.static(buildPath));
-} else {
-  console.log('Build directory not found!');
-}
+app.use(express.static(path.join(__dirname, 'client/build')));
 
 // Catch all handler for React app
 app.get('*', (req, res) => {
@@ -353,9 +344,6 @@ app.get('*', (req, res) => {
   
   // Serve React app for all other routes
   const indexPath = path.join(__dirname, 'client/build', 'index.html');
-  console.log('Looking for index.html at:', indexPath);
-  console.log('index.html exists:', fs.existsSync(indexPath));
-  
   if (fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
   } else {
