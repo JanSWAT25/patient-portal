@@ -33,7 +33,7 @@ const AdminDashboard = () => {
   const [uploadData, setUploadData] = useState({
     user_id: '',
     record_type: '',
-    file: null
+    files: []
   });
   const [uploading, setUploading] = useState(false);
 
@@ -105,27 +105,38 @@ const AdminDashboard = () => {
   const handleFileUpload = async (e) => {
     e.preventDefault();
     
-    if (!uploadData.user_id || !uploadData.record_type || !uploadData.file) {
-      alert('Please fill in all fields and select a file');
+    if (!uploadData.user_id || !uploadData.record_type || uploadData.files.length === 0) {
+      alert('Please fill in all fields and select at least one file');
       return;
     }
 
     setUploading(true);
     const formData = new FormData();
-    formData.append('pdf', uploadData.file);
+    
+    // Add all files to form data
+    uploadData.files.forEach(file => {
+      formData.append('pdf', file);
+    });
+    
     formData.append('user_id', uploadData.user_id);
     formData.append('record_type', uploadData.record_type);
 
     try {
-      await axios.post('/api/admin/upload', formData, {
+      const response = await axios.post('/api/admin/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
       
-      alert('File uploaded successfully!');
+      const { successful, failed } = response.data;
+      if (failed === 0) {
+        alert(`Successfully uploaded ${successful} file${successful > 1 ? 's' : ''}!`);
+      } else {
+        alert(`Uploaded ${successful} file${successful > 1 ? 's' : ''}, ${failed} failed.`);
+      }
+      
       setShowUploadModal(false);
-      setUploadData({ user_id: '', record_type: '', file: null });
+      setUploadData({ user_id: '', record_type: '', files: [] });
       fetchAdminData(); // Refresh data
     } catch (error) {
       console.error('Upload error:', error);
@@ -454,7 +465,7 @@ const AdminDashboard = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Upload File for User</h3>
+              <h3 className="text-lg font-semibold text-gray-900">Upload Files for User</h3>
               <button
                 onClick={() => setShowUploadModal(false)}
                 className="text-gray-400 hover:text-gray-600"
@@ -507,15 +518,21 @@ const AdminDashboard = () => {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    PDF File
+                    PDF Files (up to 10)
                   </label>
                   <input
                     type="file"
                     accept=".pdf"
-                    onChange={(e) => setUploadData({...uploadData, file: e.target.files[0]})}
+                    multiple
+                    onChange={(e) => setUploadData({...uploadData, files: Array.from(e.target.files)})}
                     className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500"
                     required
                   />
+                  {uploadData.files.length > 0 && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      Selected {uploadData.files.length} file{uploadData.files.length > 1 ? 's' : ''}
+                    </div>
+                  )}
                 </div>
               </div>
               

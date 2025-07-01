@@ -36,7 +36,15 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Database setup
-const db = new Database('./patient_portal.db');
+const dbPath = process.env.DATABASE_PATH || './patient_portal.db';
+let db;
+try {
+  db = new Database(dbPath);
+  console.log(`Database initialized at: ${dbPath}`);
+} catch (error) {
+  console.error('Failed to initialize database:', error);
+  process.exit(1);
+}
 
 // Initialize database tables
 // Users table
@@ -115,11 +123,16 @@ insertAdmin.run(adminPassword);
 // File upload configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    const uploadDir = process.env.UPLOAD_DIR || 'uploads/';
+    try {
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      cb(null, uploadDir);
+    } catch (error) {
+      console.error('Error creating upload directory:', error);
+      cb(error);
     }
-    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueName = `${uuidv4()}-${file.originalname}`;
@@ -137,7 +150,8 @@ const upload = multer({
     }
   },
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
+    fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    files: 10 // Allow up to 10 files at once
   }
 });
 
@@ -246,49 +260,75 @@ app.post('/api/register', (req, res) => {
 });
 
 // Upload PDF endpoint
-app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res) => {
+app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
     }
 
     const { record_type } = req.body;
-    const filePath = req.file.path;
-    const fileSize = req.file.size;
+    const results = [];
+    const errors = [];
 
-    // Extract text from PDF
-    const dataBuffer = fs.readFileSync(filePath);
-    const pdfData = await pdfParse(dataBuffer);
-    const extractedText = pdfData.text;
+    // Process each file
+    for (const file of req.files) {
+      try {
+        const filePath = file.path;
+        const fileSize = file.size;
 
-    // Detect if this is a lab report
-    const isLabReport = await detectLabReport(extractedText);
+        // Extract text from PDF
+        const dataBuffer = fs.readFileSync(filePath);
+        const pdfData = await pdfParse(dataBuffer);
+        const extractedText = pdfData.text;
 
-    // Store in database
-    try {
-      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-      const result = stmt.run(req.user.id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
+        // Detect if this is a lab report
+        const isLabReport = await detectLabReport(extractedText);
 
-      const recordId = result.lastInsertRowid;
+        // Store in database
+        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const result = stmt.run(req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
 
-      // If it's a lab report, extract lab data
-      if (isLabReport && openai) {
-        try {
-          await extractLabDataFromText(extractedText, recordId, req.user.id);
-        } catch (error) {
-          console.error('Lab data extraction failed:', error);
+        const recordId = result.lastInsertRowid;
+
+        // If it's a lab report, extract lab data
+        if (isLabReport && openai) {
+          try {
+            await extractLabDataFromText(extractedText, recordId, req.user.id);
+          } catch (error) {
+            console.error('Lab data extraction failed for file:', file.originalname, error);
+          }
         }
-      }
 
-      res.status(201).json({
-        message: 'PDF uploaded successfully',
-        record_id: recordId,
-        filename: req.file.filename,
-        is_lab_report: isLabReport
-      });
-    } catch (error) {
-      return res.status(500).json({ error: 'Database error' });
+        results.push({
+          filename: file.originalname,
+          record_id: recordId,
+          is_lab_report: isLabReport,
+          status: 'success'
+        });
+      } catch (error) {
+        console.error('Error processing file:', file.originalname, error);
+        errors.push({
+          filename: file.originalname,
+          error: error.message,
+          status: 'failed'
+        });
+      }
+    }
+
+    // Return results
+    const response = {
+      message: `Processed ${req.files.length} files`,
+      successful: results.length,
+      failed: errors.length,
+      results: results,
+      errors: errors
+    };
+
+    if (errors.length > 0) {
+      res.status(207).json(response); // 207 Multi-Status
+    } else {
+      res.status(201).json(response);
     }
   } catch (error) {
     console.error('PDF processing error:', error);
@@ -297,10 +337,10 @@ app.post('/api/upload', authenticateToken, upload.single('pdf'), async (req, res
 });
 
 // Admin upload PDF for specific user endpoint
-app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.single('pdf'), async (req, res) => {
+app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf', 10), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
     }
 
     const { record_type, user_id } = req.body;
@@ -317,47 +357,73 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.single('pd
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const filePath = req.file.path;
-    const fileSize = req.file.size;
+    const results = [];
+    const errors = [];
 
-    // Extract text from PDF
-    const dataBuffer = fs.readFileSync(filePath);
-    const pdfData = await pdfParse(dataBuffer);
-    const extractedText = pdfData.text;
+    // Process each file
+    for (const file of req.files) {
+      try {
+        const filePath = file.path;
+        const fileSize = file.size;
 
-    // Detect if this is a lab report
-    const isLabReport = await detectLabReport(extractedText);
+        // Extract text from PDF
+        const dataBuffer = fs.readFileSync(filePath);
+        const pdfData = await pdfParse(dataBuffer);
+        const extractedText = pdfData.text;
 
-    // Store in database
-    try {
-      const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-      const result = stmt.run(user_id, req.user.id, req.file.filename, req.file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
+        // Detect if this is a lab report
+        const isLabReport = await detectLabReport(extractedText);
 
-      const recordId = result.lastInsertRowid;
+        // Store in database
+        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const result = stmt.run(user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReport);
 
-      // If it's a lab report, extract lab data
-      if (isLabReport && openai) {
-        try {
-          await extractLabDataFromText(extractedText, recordId, user_id);
-        } catch (error) {
-          console.error('Lab data extraction failed:', error);
+        const recordId = result.lastInsertRowid;
+
+        // If it's a lab report, extract lab data
+        if (isLabReport && openai) {
+          try {
+            await extractLabDataFromText(extractedText, recordId, user_id);
+          } catch (error) {
+            console.error('Lab data extraction failed for file:', file.originalname, error);
+          }
         }
+
+        results.push({
+          filename: file.originalname,
+          record_id: recordId,
+          is_lab_report: isLabReport,
+          status: 'success'
+        });
+      } catch (error) {
+        console.error('Error processing file:', file.originalname, error);
+        errors.push({
+          filename: file.originalname,
+          error: error.message,
+          status: 'failed'
+        });
       }
+    }
 
-      res.status(201).json({
-        message: 'PDF uploaded successfully for user',
-        record_id: recordId,
-        filename: req.file.filename,
-        is_lab_report: isLabReport,
-        user: {
-          id: user.id,
-          username: user.username,
-          full_name: user.full_name
-        }
-      });
-    } catch (error) {
-      return res.status(500).json({ error: 'Database error' });
+    // Return results
+    const response = {
+      message: `Processed ${req.files.length} files for user`,
+      successful: results.length,
+      failed: errors.length,
+      results: results,
+      errors: errors,
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name
+      }
+    };
+
+    if (errors.length > 0) {
+      res.status(207).json(response); // 207 Multi-Status
+    } else {
+      res.status(201).json(response);
     }
   } catch (error) {
     console.error('PDF processing error:', error);

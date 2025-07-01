@@ -1,12 +1,13 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, X } from 'lucide-react';
+import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, X, Check, XCircle } from 'lucide-react';
 import axios from 'axios';
 
 const Upload = () => {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [recordType, setRecordType] = useState('');
+  const [uploadProgress, setUploadProgress] = useState([]);
 
   const onDrop = useCallback(async (acceptedFiles) => {
     if (!recordType) {
@@ -16,10 +17,16 @@ const Upload = () => {
 
     setUploading(true);
     setUploadStatus(null);
+    setUploadProgress([]);
 
     try {
       const formData = new FormData();
-      formData.append('pdf', acceptedFiles[0]);
+      
+      // Add all files to form data
+      acceptedFiles.forEach(file => {
+        formData.append('pdf', file);
+      });
+      
       formData.append('record_type', recordType);
 
       const response = await axios.post('/api/upload', formData, {
@@ -28,11 +35,41 @@ const Upload = () => {
         },
       });
 
-      setUploadStatus({
-        type: 'success',
-        message: `Successfully uploaded ${acceptedFiles[0].name}`,
-        data: response.data
+      // Process results
+      const { successful, failed, results, errors } = response.data;
+      
+      if (failed === 0) {
+        setUploadStatus({
+          type: 'success',
+          message: `Successfully uploaded ${successful} file${successful > 1 ? 's' : ''}`,
+          data: response.data
+        });
+      } else {
+        setUploadStatus({
+          type: 'partial',
+          message: `Uploaded ${successful} file${successful > 1 ? 's' : ''}, ${failed} failed`,
+          data: response.data
+        });
+      }
+
+      // Set progress for individual files
+      const progress = [];
+      results.forEach(result => {
+        progress.push({
+          filename: result.filename,
+          status: 'success',
+          message: 'Uploaded successfully'
+        });
       });
+      errors.forEach(error => {
+        progress.push({
+          filename: error.filename,
+          status: 'error',
+          message: error.error
+        });
+      });
+      setUploadProgress(progress);
+
     } catch (error) {
       setUploadStatus({
         type: 'error',
@@ -48,7 +85,7 @@ const Upload = () => {
     accept: {
       'application/pdf': ['.pdf']
     },
-    multiple: false
+    multiple: true
   });
 
   const recordTypes = [
@@ -102,14 +139,14 @@ const Upload = () => {
           <input {...getInputProps()} />
           <UploadIcon className="mx-auto h-12 w-12 text-gray-400 mb-4" />
           {isDragActive ? (
-            <p className="text-medical-600 font-medium">Drop the PDF file here...</p>
+            <p className="text-medical-600 font-medium">Drop PDF files here...</p>
           ) : (
             <div>
               <p className="text-gray-600 mb-2">
-                Drag and drop a PDF file here, or click to select
+                Drag and drop PDF files here, or click to select
               </p>
               <p className="text-sm text-gray-500">
-                Only PDF files are supported (max 10MB)
+                Only PDF files are supported (max 10 files, 10MB each)
               </p>
             </div>
           )}
@@ -120,20 +157,53 @@ const Upload = () => {
           <div className={`mt-4 p-4 rounded-md ${
             uploadStatus.type === 'success' 
               ? 'bg-green-50 border border-green-200' 
+              : uploadStatus.type === 'partial'
+              ? 'bg-yellow-50 border border-yellow-200'
               : 'bg-red-50 border border-red-200'
           }`}>
             <div className="flex items-center">
               {uploadStatus.type === 'success' ? (
                 <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+              ) : uploadStatus.type === 'partial' ? (
+                <AlertCircle className="h-5 w-5 text-yellow-500 mr-2" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-red-500 mr-2" />
               )}
               <span className={`text-sm ${
-                uploadStatus.type === 'success' ? 'text-green-700' : 'text-red-700'
+                uploadStatus.type === 'success' ? 'text-green-700' : 
+                uploadStatus.type === 'partial' ? 'text-yellow-700' : 'text-red-700'
               }`}>
                 {uploadStatus.message}
               </span>
             </div>
+          </div>
+        )}
+
+        {/* Individual File Progress */}
+        {uploadProgress.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <h4 className="text-sm font-medium text-gray-700">Upload Results:</h4>
+            {uploadProgress.map((file, index) => (
+              <div key={index} className={`flex items-center justify-between p-3 rounded-md ${
+                file.status === 'success' 
+                  ? 'bg-green-50 border border-green-200' 
+                  : 'bg-red-50 border border-red-200'
+              }`}>
+                <div className="flex items-center">
+                  {file.status === 'success' ? (
+                    <Check className="h-4 w-4 text-green-500 mr-2" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-red-500 mr-2" />
+                  )}
+                  <span className="text-sm font-medium text-gray-900">{file.filename}</span>
+                </div>
+                <span className={`text-xs ${
+                  file.status === 'success' ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {file.message}
+                </span>
+              </div>
+            ))}
           </div>
         )}
 
@@ -156,7 +226,8 @@ const Upload = () => {
             <h4 className="font-medium text-gray-900 mb-2">Supported Formats</h4>
             <ul className="text-sm text-gray-600 space-y-1">
               <li>• PDF files only</li>
-              <li>• Maximum file size: 10MB</li>
+              <li>• Maximum 10 files at once</li>
+              <li>• Maximum file size: 10MB each</li>
               <li>• Clear, readable documents</li>
             </ul>
           </div>
