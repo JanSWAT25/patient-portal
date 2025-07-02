@@ -993,6 +993,39 @@ app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res
   }
 });
 
+// Get lab trends grouped by record_type and test_name
+app.get('/api/lab-values/grouped-trends', authenticateToken, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        pr.record_type,
+        lv.test_name,
+        lv.value,
+        lv.unit,
+        lv.test_date,
+        lv.is_abnormal,
+        lv.reference_range,
+        pr.original_name as record_name,
+        pr.upload_date
+      FROM lab_values lv
+      LEFT JOIN pdf_records pr ON lv.record_id = pr.id
+      WHERE lv.user_id = ?
+      ORDER BY pr.record_type, lv.test_name, lv.test_date ASC, lv.extraction_date ASC
+    `);
+    const rows = stmt.all(req.user.id);
+    // Group by record_type and test_name
+    const grouped = {};
+    for (const row of rows) {
+      if (!grouped[row.record_type]) grouped[row.record_type] = {};
+      if (!grouped[row.record_type][row.test_name]) grouped[row.record_type][row.test_name] = [];
+      grouped[row.record_type][row.test_name].push(row);
+    }
+    res.json(grouped);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // Serve static files from React build
 app.use(express.static(path.join(__dirname, 'client/build')));
 

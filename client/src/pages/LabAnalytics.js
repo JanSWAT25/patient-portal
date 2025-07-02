@@ -26,9 +26,11 @@ const LabAnalytics = () => {
   const [trendData, setTrendData] = useState([]);
   const [analyticsSummary, setAnalyticsSummary] = useState(null);
   const [availableTests, setAvailableTests] = useState([]);
+  const [groupedTrends, setGroupedTrends] = useState({});
 
   useEffect(() => {
     fetchLabData();
+    fetchGroupedTrends();
   }, []);
 
   const fetchLabData = async () => {
@@ -48,6 +50,15 @@ const LabAnalytics = () => {
       console.error('Error fetching lab data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchGroupedTrends = async () => {
+    try {
+      const response = await axios.get('/api/lab-values/grouped-trends');
+      setGroupedTrends(response.data);
+    } catch (error) {
+      console.error('Error fetching grouped trends:', error);
     }
   };
 
@@ -161,6 +172,40 @@ const LabAnalytics = () => {
           ))}
         </div>
       </div>
+    );
+  };
+
+  // Simple SVG line chart for trends
+  const SimpleLineChart = ({ data, testName }) => {
+    if (!data || data.length < 2) return <div className="text-gray-500">Not enough data for a trend graph.</div>;
+    // Sort by date
+    const sorted = [...data].sort((a, b) => new Date(a.test_date || a.upload_date) - new Date(b.test_date || b.upload_date));
+    const values = sorted.map(d => Number(d.value));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const points = values.map((v, i) => {
+      const x = (i / (values.length - 1)) * 180 + 10;
+      const y = 90 - ((v - min) / (max - min || 1)) * 70;
+      return `${x},${y}`;
+    }).join(' ');
+    return (
+      <svg width="200" height="100" className="my-2">
+        <polyline
+          fill="none"
+          stroke="#0ea5e9"
+          strokeWidth="2"
+          points={points}
+        />
+        {/* Dots */}
+        {values.map((v, i) => {
+          const x = (i / (values.length - 1)) * 180 + 10;
+          const y = 90 - ((v - min) / (max - min || 1)) * 70;
+          return <circle key={i} cx={x} cy={y} r="3" fill="#0ea5e9" />;
+        })}
+        {/* Min/Max labels */}
+        <text x="0" y="95" fontSize="10" fill="#888">{min}</text>
+        <text x="170" y="95" fontSize="10" fill="#888" textAnchor="end">{max}</text>
+      </svg>
     );
   };
 
@@ -397,36 +442,32 @@ const LabAnalytics = () => {
       )}
 
       {viewMode === 'trends' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <LineChart className="h-5 w-5 mr-2 text-medical-600" />
-              Test Trends
-            </h3>
-            <p className="text-gray-600 mb-6">
-              Select a test to view its trend over time
-            </p>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-              {availableTests.slice(0, 12).map((test) => (
-                <button
-                  key={test.test_name}
-                  onClick={() => fetchTrendData(test.test_name)}
-                  className="p-4 border border-gray-200 rounded-lg hover:border-medical-300 hover:bg-medical-50 transition-colors duration-200 text-left"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium text-gray-900">{test.test_name}</h4>
-                    <span className="text-sm text-gray-500">{test.count}</span>
+        <div className="space-y-8">
+          {Object.keys(groupedTrends).length === 0 && (
+            <div className="text-gray-500">No lab trend data available.</div>
+          )}
+          {Object.entries(groupedTrends).map(([recordType, tests]) => (
+            <div key={recordType} className="bg-white rounded-lg shadow-md p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <LineChart className="h-5 w-5 mr-2 text-medical-600" />
+                {recordType || 'Unknown Record Type'}
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {Object.entries(tests).map(([testName, data]) => (
+                  <div key={testName} className="p-4 border border-gray-200 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-medium text-gray-900">{testName}</h4>
+                      <span className="text-xs text-gray-500">{data.length} pts</span>
+                    </div>
+                    <SimpleLineChart data={data} testName={testName} />
+                    <div className="text-xs text-gray-500 mt-2">
+                      {data[data.length-1]?.unit}
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-600">{test.test_category}</p>
-                </button>
-              ))}
+                ))}
+              </div>
             </div>
-            
-            {trendData.length > 0 && (
-              <TrendChart data={trendData} testName={selectedTest || 'Selected Test'} />
-            )}
-          </div>
+          ))}
         </div>
       )}
 
