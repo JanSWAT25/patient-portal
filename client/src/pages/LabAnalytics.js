@@ -7,7 +7,10 @@ import {
   RefreshCw,
   AlertTriangle,
   CheckCircle,
-  Clock
+  Clock,
+  BarChart3,
+  LineChart,
+  Target
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -20,6 +23,9 @@ const LabAnalytics = () => {
   const [selectedTest, setSelectedTest] = useState('');
   const [viewMode, setViewMode] = useState('overview');
   const [extracting, setExtracting] = useState(false);
+  const [trendData, setTrendData] = useState([]);
+  const [analyticsSummary, setAnalyticsSummary] = useState(null);
+  const [availableTests, setAvailableTests] = useState([]);
 
   useEffect(() => {
     fetchLabData();
@@ -27,13 +33,17 @@ const LabAnalytics = () => {
 
   const fetchLabData = async () => {
     try {
-      const [labResponse, categoriesResponse] = await Promise.all([
+      const [labResponse, categoriesResponse, summaryResponse, testsResponse] = await Promise.all([
         axios.get('/api/lab-values'),
-        axios.get('/api/lab-categories')
+        axios.get('/api/lab-categories'),
+        axios.get('/api/lab-analytics/summary'),
+        axios.get('/api/lab-values/test-names')
       ]);
       
       setLabValues(labResponse.data);
       setCategories(categoriesResponse.data);
+      setAnalyticsSummary(summaryResponse.data);
+      setAvailableTests(testsResponse.data);
     } catch (error) {
       console.error('Error fetching lab data:', error);
     } finally {
@@ -52,6 +62,15 @@ const LabAnalytics = () => {
       alert('Failed to re-extract lab data');
     } finally {
       setExtracting(false);
+    }
+  };
+
+  const fetchTrendData = async (testName) => {
+    try {
+      const response = await axios.get(`/api/lab-values/trends/${testName}`);
+      setTrendData(response.data);
+    } catch (error) {
+      console.error('Error fetching trend data:', error);
     }
   };
 
@@ -102,6 +121,48 @@ const LabAnalytics = () => {
       </div>
     </div>
   );
+
+  const TrendChart = ({ data, testName }) => {
+    if (!data || data.length === 0) {
+      return (
+        <div className="text-center py-8 text-gray-500">
+          No trend data available for {testName}
+        </div>
+      );
+    }
+
+    const sortedData = data.sort((a, b) => new Date(a.test_date || a.extraction_date) - new Date(b.test_date || b.extraction_date));
+    
+    return (
+      <div className="bg-white rounded-lg shadow-md p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+          <TrendingUp className="h-5 w-5 mr-2 text-medical-600" />
+          {testName} Trend
+        </h3>
+        <div className="space-y-4">
+          {sortedData.map((item, index) => (
+            <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <div className="flex items-center space-x-4">
+                <div className={`w-3 h-3 rounded-full ${item.is_abnormal ? 'bg-red-500' : 'bg-green-500'}`}></div>
+                <div>
+                  <p className="font-medium text-gray-900">{item.value} {item.unit}</p>
+                  <p className="text-sm text-gray-500">
+                    {new Date(item.test_date || item.extraction_date).toLocaleDateString()}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-gray-600">{item.record_name}</p>
+                {item.reference_range && (
+                  <p className="text-xs text-gray-500">Ref: {item.reference_range}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -178,6 +239,17 @@ const LabAnalytics = () => {
             >
               <Filter className="h-4 w-4 inline mr-2" />
               Categories
+            </button>
+            <button
+              onClick={() => setViewMode('trends')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors duration-200 ${
+                viewMode === 'trends' 
+                  ? 'bg-medical-100 text-medical-700 border border-medical-200' 
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <LineChart className="h-4 w-4 inline mr-2" />
+              Trends
             </button>
           </div>
 
@@ -321,6 +393,40 @@ const LabAnalytics = () => {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {viewMode === 'trends' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h3 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <LineChart className="h-5 w-5 mr-2 text-medical-600" />
+              Test Trends
+            </h3>
+            <p className="text-gray-600 mb-6">
+              Select a test to view its trend over time
+            </p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              {availableTests.slice(0, 12).map((test) => (
+                <button
+                  key={test.test_name}
+                  onClick={() => fetchTrendData(test.test_name)}
+                  className="p-4 border border-gray-200 rounded-lg hover:border-medical-300 hover:bg-medical-50 transition-colors duration-200 text-left"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-medium text-gray-900">{test.test_name}</h4>
+                    <span className="text-sm text-gray-500">{test.count}</span>
+                  </div>
+                  <p className="text-sm text-gray-600">{test.test_category}</p>
+                </button>
+              ))}
+            </div>
+            
+            {trendData.length > 0 && (
+              <TrendChart data={trendData} testName={selectedTest || 'Selected Test'} />
+            )}
+          </div>
         </div>
       )}
 

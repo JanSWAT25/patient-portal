@@ -590,25 +590,41 @@ async function extractLabDataFromText(text, recordId, userId) {
 
   try {
     const prompt = `
-    You are a medical data extraction specialist. Extract laboratory test results from the following text.
+    You are a medical data extraction specialist. Extract ALL laboratory test results from the following medical document text.
+    
+    IMPORTANT: Extract EVERY lab test with numerical values, including:
+    - Complete Blood Count (CBC): Hemoglobin, Hematocrit, WBC, RBC, Platelets, MCV, MCH, MCHC
+    - Basic Metabolic Panel: Glucose, BUN, Creatinine, Sodium, Potassium, Chloride, CO2, Calcium
+    - Lipid Panel: Total Cholesterol, HDL, LDL, Triglycerides
+    - Liver Function: ALT, AST, Alkaline Phosphatase, Bilirubin, Albumin
+    - Thyroid: TSH, T3, T4, Free T3, Free T4
+    - Diabetes: HbA1c, Fasting Glucose
+    - Kidney Function: Creatinine, BUN, eGFR
+    - Any other numerical lab values found
     
     Return ONLY a JSON array of objects with this exact structure:
     [
       {
-        "test_name": "Test name (e.g., Hemoglobin, Glucose, Cholesterol)",
+        "test_name": "Exact test name as written (e.g., Hemoglobin, Glucose, Total Cholesterol)",
         "test_category": "Category (Hematology, Chemistry, Lipids, Thyroid, Diabetes, Liver, Kidney, Other)",
         "value": numeric_value,
-        "unit": "unit (mg/dL, mmol/L, g/dL, etc.)",
-        "reference_range": "normal range (e.g., 12.0-15.5 g/dL)",
+        "unit": "unit (mg/dL, mmol/L, g/dL, %, etc.)",
+        "reference_range": "normal range (e.g., 12.0-15.5 g/dL or 135-145 mEq/L)",
         "is_abnormal": boolean,
-        "test_date": "YYYY-MM-DD if found, otherwise null"
+        "test_date": "YYYY-MM-DD if found in document, otherwise null"
       }
     ]
     
-    Only include tests with numerical values. If no lab data is found, return an empty array.
+    Rules:
+    1. Extract ALL numerical lab values, even if they appear normal
+    2. Use exact test names as written in the document
+    3. Include reference ranges if provided
+    4. Mark as abnormal if value is outside reference range or marked as high/low
+    5. If no lab data is found, return an empty array
+    6. Be thorough - don't miss any lab values
     
     Text to analyze:
-    ${text.substring(0, 8000)} // Limit text length for API
+    ${text.substring(0, 12000)} // Increased text length for better extraction
     `;
 
     const completion = await openai.chat.completions.create({
@@ -856,6 +872,92 @@ app.get('/api/lab-values/category/:category', authenticateToken, (req, res) => {
     `);
     const labValues = stmt.all(req.user.id, req.params.category);
     res.json(labValues);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get lab trends for a specific test
+app.get('/api/lab-values/trends/:testName', authenticateToken, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        lv.*,
+        pr.original_name as record_name,
+        pr.upload_date,
+        pr.record_type
+      FROM lab_values lv
+      LEFT JOIN pdf_records pr ON lv.record_id = pr.id
+      WHERE lv.user_id = ? AND lv.test_name LIKE ?
+      ORDER BY lv.test_date ASC, lv.extraction_date ASC
+    `);
+    const labValues = stmt.all(req.user.id, `%${req.params.testName}%`);
+    res.json(labValues);
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get lab analytics summary
+app.get('/api/lab-analytics/summary', authenticateToken, (req, res) => {
+  try {
+    // Get total lab values
+    const totalStmt = db.prepare(`
+      SELECT COUNT(*) as total FROM lab_values WHERE user_id = ?
+    `);
+    const total = totalStmt.get(req.user.id).total;
+
+    // Get values by category
+    const categoryStmt = db.prepare(`
+      SELECT test_category, COUNT(*) as count 
+      FROM lab_values 
+      WHERE user_id = ? 
+      GROUP BY test_category
+    `);
+    const categories = categoryStmt.all(req.user.id);
+
+    // Get abnormal values
+    const abnormalStmt = db.prepare(`
+      SELECT COUNT(*) as count FROM lab_values 
+      WHERE user_id = ? AND is_abnormal = 1
+    `);
+    const abnormal = abnormalStmt.get(req.user.id).count;
+
+    // Get recent trends (last 30 days)
+    const recentStmt = db.prepare(`
+      SELECT lv.test_name, lv.value, lv.unit, lv.test_date, pr.upload_date
+      FROM lab_values lv
+      LEFT JOIN pdf_records pr ON lv.record_id = pr.id
+      WHERE lv.user_id = ? 
+      AND lv.extraction_date >= datetime('now', '-30 days')
+      ORDER BY lv.extraction_date DESC
+      LIMIT 20
+    `);
+    const recent = recentStmt.all(req.user.id);
+
+    res.json({
+      total_lab_values: total,
+      by_category: categories,
+      abnormal_count: abnormal,
+      recent_trends: recent
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get all available test names for a user
+app.get('/api/lab-values/test-names', authenticateToken, (req, res) => {
+  try {
+    const stmt = db.prepare(`
+      SELECT DISTINCT test_name, test_category, COUNT(*) as count
+      FROM lab_values 
+      WHERE user_id = ?
+      GROUP BY test_name, test_category
+      ORDER BY count DESC, test_name ASC
+    `);
+    const testNames = stmt.all(req.user.id);
+    res.json(testNames);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
