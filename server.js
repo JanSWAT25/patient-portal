@@ -37,93 +37,108 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Database setup
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({ 
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
 
 // Initialize database tables
-// Users table
-pool.query(`
-  CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    full_name TEXT NOT NULL,
-    role TEXT DEFAULT 'user',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+async function initializeDatabase() {
+  try {
+    console.log('Initializing database...');
+    
+    // Users table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        full_name TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-// PDF records table
-pool.query(`
-  CREATE TABLE IF NOT EXISTS pdf_records (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER,
-    uploaded_by INTEGER,
-    filename TEXT NOT NULL,
-    original_name TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    file_size INTEGER,
-    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    record_type TEXT,
-    extracted_data TEXT,
-    is_lab_report BOOLEAN DEFAULT FALSE,
-    lab_data_extracted BOOLEAN DEFAULT FALSE,
-    pdf_analysis TEXT,
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (uploaded_by) REFERENCES users (id)
-  )
-`);
+    // PDF records table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pdf_records (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER,
+        uploaded_by INTEGER,
+        filename TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_size INTEGER,
+        upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        record_type TEXT,
+        extracted_data TEXT,
+        is_lab_report BOOLEAN DEFAULT FALSE,
+        lab_data_extracted BOOLEAN DEFAULT FALSE,
+        pdf_analysis TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (uploaded_by) REFERENCES users (id)
+      )
+    `);
 
-// Lab values table for storing extracted numerical data
-pool.query(`
-  CREATE TABLE IF NOT EXISTS lab_values (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER,
-    record_id INTEGER,
-    test_name TEXT NOT NULL,
-    test_category TEXT,
-    value REAL,
-    unit TEXT,
-    reference_range TEXT,
-    is_abnormal BOOLEAN DEFAULT FALSE,
-    test_date TIMESTAMP,
-    extraction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    confidence_score REAL DEFAULT 0.0,
-    FOREIGN KEY (user_id) REFERENCES users (id),
-    FOREIGN KEY (record_id) REFERENCES pdf_records (id)
-  )
-`);
+    // Lab values table for storing extracted numerical data
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lab_values (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER,
+        record_id INTEGER,
+        test_name TEXT NOT NULL,
+        test_category TEXT,
+        value REAL,
+        unit TEXT,
+        reference_range TEXT,
+        is_abnormal BOOLEAN DEFAULT FALSE,
+        test_date TIMESTAMP,
+        extraction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        confidence_score REAL DEFAULT 0.0,
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (record_id) REFERENCES pdf_records (id)
+      )
+    `);
 
-// Lab test categories for organization
-pool.query(`
-  CREATE TABLE IF NOT EXISTS lab_categories (
-    id SERIAL PRIMARY KEY,
-    category_name TEXT UNIQUE NOT NULL,
-    description TEXT,
-    color TEXT DEFAULT '#3B82F6'
-  )
-`);
+    // Lab test categories for organization
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS lab_categories (
+        id SERIAL PRIMARY KEY,
+        category_name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        color TEXT DEFAULT '#3B82F6'
+      )
+    `);
 
-// Insert default lab categories
-pool.query(`
-  INSERT INTO lab_categories (category_name, description, color) VALUES 
-    ('Hematology', 'Blood cell counts and hemoglobin', '#EF4444'),
-    ('Chemistry', 'Basic metabolic panel and electrolytes', '#10B981'),
-    ('Lipids', 'Cholesterol and triglycerides', '#F59E0B'),
-    ('Thyroid', 'TSH, T3, T4 levels', '#8B5CF6'),
-    ('Diabetes', 'Glucose and HbA1c', '#EC4899'),
-    ('Liver', 'Liver function tests', '#06B6D4'),
-    ('Kidney', 'Kidney function tests', '#84CC16'),
-    ('Other', 'Other laboratory tests', '#6B7280')
-`);
+    // Insert default lab categories
+    await pool.query(`
+      INSERT INTO lab_categories (category_name, description, color) VALUES 
+        ('Hematology', 'Blood cell counts and hemoglobin', '#EF4444'),
+        ('Chemistry', 'Basic metabolic panel and electrolytes', '#10B981'),
+        ('Lipids', 'Cholesterol and triglycerides', '#F59E0B'),
+        ('Thyroid', 'TSH, T3, T4 levels', '#8B5CF6'),
+        ('Diabetes', 'Glucose and HbA1c', '#EC4899'),
+        ('Liver', 'Liver function tests', '#06B6D4'),
+        ('Kidney', 'Kidney function tests', '#84CC16'),
+        ('Other', 'Other laboratory tests', '#6B7280')
+      ON CONFLICT (category_name) DO NOTHING
+    `);
 
-// Create default admin user
-const adminPassword = bcrypt.hashSync('admin123', 10);
-const insertAdmin = pool.query(`
-  INSERT INTO users (username, password, email, full_name, role) 
-  VALUES ($1, $2, $3, $4, $5)
-  ON CONFLICT (username) DO NOTHING
-`, ['admin', adminPassword, 'admin@medicalportal.com', 'Administrator', 'admin']);
+    // Create default admin user
+    const adminPassword = bcrypt.hashSync('admin123', 10);
+    await pool.query(`
+      INSERT INTO users (username, password, email, full_name, role) 
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (username) DO NOTHING
+    `, ['admin', adminPassword, 'admin@medicalportal.com', 'Administrator', 'admin']);
+
+    console.log('Database initialized successfully');
+  } catch (error) {
+    console.error('Database initialization error:', error);
+    throw error;
+  }
+}
 
 // File upload configuration
 const storage = multer.diskStorage({
@@ -1100,7 +1115,21 @@ app.get('*', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Access the application at http://localhost:${PORT}`);
-}); 
+// Start server
+async function startServer() {
+  try {
+    // Initialize database first
+    await initializeDatabase();
+    
+    // Start the server
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Access the application at http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer(); 
