@@ -11,6 +11,7 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const Database = require('better-sqlite3');
 const OpenAI = require('openai');
+const mammoth = require('mammoth');
 
 // Initialize OpenAI (optional)
 let openai = null;
@@ -36,7 +37,7 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Database setup
-const dbPath = process.env.DATABASE_PATH || './patient_portal.db';
+const dbPath = process.env.DATABASE_PATH || '/data/patient_portal.db';
 let db;
 try {
   db = new Database(dbPath);
@@ -72,6 +73,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS pdf_records (
   extracted_data TEXT,
   is_lab_report BOOLEAN DEFAULT FALSE,
   lab_data_extracted BOOLEAN DEFAULT FALSE,
+  pdf_analysis TEXT,
   FOREIGN KEY (user_id) REFERENCES users (id),
   FOREIGN KEY (uploaded_by) REFERENCES users (id)
 )`);
@@ -143,10 +145,10 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
+    if (file.mimetype === 'application/pdf' || file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
       cb(null, true);
     } else {
-      cb(new Error('Only PDF files are allowed'), false);
+      cb(new Error('Only PDF and DOCX files are allowed'), false);
     }
   },
   limits: {
@@ -279,10 +281,19 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
         const filePath = file.path;
         const fileSize = file.size;
 
-        // Extract text from PDF
-        const dataBuffer = fs.readFileSync(filePath);
-        const pdfData = await pdfParse(dataBuffer);
-        const extractedText = pdfData.text;
+        // Extract text from PDF or DOCX
+        let extractedText = '';
+        if (file.mimetype === 'application/pdf') {
+          const dataBuffer = fs.readFileSync(filePath);
+          const pdfData = await pdfParse(dataBuffer);
+          extractedText = pdfData.text;
+        } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+          const docxBuffer = fs.readFileSync(filePath);
+          const result = await mammoth.extractRawText({ buffer: docxBuffer });
+          extractedText = result.value;
+        } else {
+          extractedText = '';
+        }
 
         // Detect if this is a lab report
         const isLabReport = await detectLabReport(extractedText);
@@ -295,9 +306,19 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
           filename: file.filename,
           original_name: file.originalname
         });
-        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        const result = stmt.run(req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt);
+        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const aiResponse = await openai.chat.completions.create({
+          model: "gpt-4",
+          messages: [
+            { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
+            { role: "user", content: extractedText.substring(0, 12000) }
+          ],
+          temperature: 0.1,
+          max_tokens: 2000
+        });
+        const aiContent = aiResponse.choices[0].message.content;
+        const result = stmt.run(req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, aiContent);
 
         const recordId = result.lastInsertRowid;
 
@@ -380,10 +401,19 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
         const filePath = file.path;
         const fileSize = file.size;
 
-        // Extract text from PDF
-        const dataBuffer = fs.readFileSync(filePath);
-        const pdfData = await pdfParse(dataBuffer);
-        const extractedText = pdfData.text;
+        // Extract text from PDF or DOCX
+        let extractedText = '';
+        if (file.mimetype === 'application/pdf') {
+          const dataBuffer = fs.readFileSync(filePath);
+          const pdfData = await pdfParse(dataBuffer);
+          extractedText = pdfData.text;
+        } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+          const docxBuffer = fs.readFileSync(filePath);
+          const result = await mammoth.extractRawText({ buffer: docxBuffer });
+          extractedText = result.value;
+        } else {
+          extractedText = '';
+        }
 
         // Detect if this is a lab report
         const isLabReport = await detectLabReport(extractedText);
@@ -396,9 +426,19 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
           filename: file.filename,
           original_name: file.originalname
         });
-        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        const result = stmt.run(user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt);
+        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const aiResponse = await openai.chat.completions.create({
+          model: "gpt-4",
+          messages: [
+            { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
+            { role: "user", content: extractedText.substring(0, 12000) }
+          ],
+          temperature: 0.1,
+          max_tokens: 2000
+        });
+        const aiContent = aiResponse.choices[0].message.content;
+        const result = stmt.run(user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, aiContent);
 
         const recordId = result.lastInsertRowid;
 
