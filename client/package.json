@@ -18,7 +18,8 @@
     "tailwindcss": "^3.2.7",
     "autoprefixer": "^10.4.14",
     "postcss": "^8.4.21",
-    "pdfjs-dist": "^3.11.174"
+    "pdfjs-dist": "^3.11.174",
+    "date-fns": "^2.30.0"
   },
   "scripts": {
     "start": "react-scripts start",

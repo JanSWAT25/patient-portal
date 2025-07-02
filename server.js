@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 const OpenAI = require('openai');
 const mammoth = require('mammoth');
 
@@ -37,90 +37,93 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Database setup
-const dbPath = process.env.DATABASE_PATH || '/data/patient_portal.db';
-let db;
-try {
-  db = new Database(dbPath);
-  console.log(`Database initialized at: ${dbPath}`);
-} catch (error) {
-  console.error('Failed to initialize database:', error);
-  process.exit(1);
-}
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // Initialize database tables
 // Users table
-db.exec(`CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  password TEXT NOT NULL,
-  email TEXT UNIQUE NOT NULL,
-  full_name TEXT NOT NULL,
-  role TEXT DEFAULT 'user',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
+pool.query(`
+  CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT NOT NULL,
+    role TEXT DEFAULT 'user',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 
 // PDF records table
-db.exec(`CREATE TABLE IF NOT EXISTS pdf_records (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER,
-  uploaded_by INTEGER,
-  filename TEXT NOT NULL,
-  original_name TEXT NOT NULL,
-  file_path TEXT NOT NULL,
-  file_size INTEGER,
-  upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-  record_type TEXT,
-  extracted_data TEXT,
-  is_lab_report BOOLEAN DEFAULT FALSE,
-  lab_data_extracted BOOLEAN DEFAULT FALSE,
-  pdf_analysis TEXT,
-  FOREIGN KEY (user_id) REFERENCES users (id),
-  FOREIGN KEY (uploaded_by) REFERENCES users (id)
-)`);
+pool.query(`
+  CREATE TABLE IF NOT EXISTS pdf_records (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    uploaded_by INTEGER,
+    filename TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_size INTEGER,
+    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    record_type TEXT,
+    extracted_data TEXT,
+    is_lab_report BOOLEAN DEFAULT FALSE,
+    lab_data_extracted BOOLEAN DEFAULT FALSE,
+    pdf_analysis TEXT,
+    FOREIGN KEY (user_id) REFERENCES users (id),
+    FOREIGN KEY (uploaded_by) REFERENCES users (id)
+  )
+`);
 
 // Lab values table for storing extracted numerical data
-db.exec(`CREATE TABLE IF NOT EXISTS lab_values (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER,
-  record_id INTEGER,
-  test_name TEXT NOT NULL,
-  test_category TEXT,
-  value REAL,
-  unit TEXT,
-  reference_range TEXT,
-  is_abnormal BOOLEAN DEFAULT FALSE,
-  test_date DATETIME,
-  extraction_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-  confidence_score REAL DEFAULT 0.0,
-  FOREIGN KEY (user_id) REFERENCES users (id),
-  FOREIGN KEY (record_id) REFERENCES pdf_records (id)
-)`);
+pool.query(`
+  CREATE TABLE IF NOT EXISTS lab_values (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    record_id INTEGER,
+    test_name TEXT NOT NULL,
+    test_category TEXT,
+    value REAL,
+    unit TEXT,
+    reference_range TEXT,
+    is_abnormal BOOLEAN DEFAULT FALSE,
+    test_date TIMESTAMP,
+    extraction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    confidence_score REAL DEFAULT 0.0,
+    FOREIGN KEY (user_id) REFERENCES users (id),
+    FOREIGN KEY (record_id) REFERENCES pdf_records (id)
+  )
+`);
 
 // Lab test categories for organization
-db.exec(`CREATE TABLE IF NOT EXISTS lab_categories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  category_name TEXT UNIQUE NOT NULL,
-  description TEXT,
-  color TEXT DEFAULT '#3B82F6'
-)`);
+pool.query(`
+  CREATE TABLE IF NOT EXISTS lab_categories (
+    id SERIAL PRIMARY KEY,
+    category_name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    color TEXT DEFAULT '#3B82F6'
+  )
+`);
 
 // Insert default lab categories
-db.exec(`INSERT OR IGNORE INTO lab_categories (category_name, description, color) VALUES 
-  ('Hematology', 'Blood cell counts and hemoglobin', '#EF4444'),
-  ('Chemistry', 'Basic metabolic panel and electrolytes', '#10B981'),
-  ('Lipids', 'Cholesterol and triglycerides', '#F59E0B'),
-  ('Thyroid', 'TSH, T3, T4 levels', '#8B5CF6'),
-  ('Diabetes', 'Glucose and HbA1c', '#EC4899'),
-  ('Liver', 'Liver function tests', '#06B6D4'),
-  ('Kidney', 'Kidney function tests', '#84CC16'),
-  ('Other', 'Other laboratory tests', '#6B7280')
+pool.query(`
+  INSERT INTO lab_categories (category_name, description, color) VALUES 
+    ('Hematology', 'Blood cell counts and hemoglobin', '#EF4444'),
+    ('Chemistry', 'Basic metabolic panel and electrolytes', '#10B981'),
+    ('Lipids', 'Cholesterol and triglycerides', '#F59E0B'),
+    ('Thyroid', 'TSH, T3, T4 levels', '#8B5CF6'),
+    ('Diabetes', 'Glucose and HbA1c', '#EC4899'),
+    ('Liver', 'Liver function tests', '#06B6D4'),
+    ('Kidney', 'Kidney function tests', '#84CC16'),
+    ('Other', 'Other laboratory tests', '#6B7280')
 `);
 
 // Create default admin user
 const adminPassword = bcrypt.hashSync('admin123', 10);
-const insertAdmin = db.prepare(`INSERT OR IGNORE INTO users (username, password, email, full_name, role) 
-        VALUES ('admin', ?, 'admin@medicalportal.com', 'Administrator', 'admin')`);
-insertAdmin.run(adminPassword);
+const insertAdmin = pool.query(`
+  INSERT INTO users (username, password, email, full_name, role) 
+  VALUES ($1, $2, $3, $4, $5)
+  ON CONFLICT (username) DO NOTHING
+`, ['admin', adminPassword, 'admin@medicalportal.com', 'Administrator', 'admin']);
 
 // File upload configuration
 const storage = multer.diskStorage({
@@ -190,8 +193,10 @@ app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
 
   try {
-    const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
-    const user = stmt.get(username);
+    const stmt = pool.query(`
+      SELECT * FROM users WHERE username = $1
+    `, [username]);
+    const user = stmt.rows[0];
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -234,11 +239,15 @@ app.post('/api/register', (req, res) => {
   const hashedPassword = bcrypt.hashSync(password, 10);
 
   try {
-    const stmt = db.prepare('INSERT INTO users (username, password, email, full_name) VALUES (?, ?, ?, ?)');
-    const result = stmt.run(username, hashedPassword, email, full_name);
+    const stmt = pool.query(`
+      INSERT INTO users (username, password, email, full_name) 
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, username, email, full_name, role
+    `, [username, hashedPassword, email, full_name]);
+    const result = stmt.rows[0];
 
     const token = jwt.sign(
-      { id: result.lastInsertRowid, username, role: 'user' },
+      { id: result.id, username, role: 'user' },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '24h' }
     );
@@ -246,7 +255,7 @@ app.post('/api/register', (req, res) => {
     res.status(201).json({
       token,
       user: {
-        id: result.lastInsertRowid,
+        id: result.id,
         username,
         email,
         full_name,
@@ -254,7 +263,7 @@ app.post('/api/register', (req, res) => {
       }
     });
   } catch (error) {
-    if (error.message.includes('UNIQUE constraint failed')) {
+    if (error.code === '23505') { // Unique constraint violation
       return res.status(400).json({ error: 'Username or email already exists' });
     }
     return res.status(500).json({ error: 'Database error' });
@@ -306,9 +315,11 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
           filename: file.filename,
           original_name: file.originalname
         });
-        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        const aiResponse = await openai.chat.completions.create({
+        const stmt = pool.query(`
+          INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING id
+        `, [req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, await openai.chat.completions.create({
           model: "gpt-4",
           messages: [
             { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
@@ -316,11 +327,10 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
           ],
           temperature: 0.1,
           max_tokens: 2000
-        });
-        const aiContent = aiResponse.choices[0].message.content;
-        const result = stmt.run(req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, aiContent);
+        }).then(response => response.data.choices[0].message.content)]);
+        const result = stmt.rows[0];
 
-        const recordId = result.lastInsertRowid;
+        const recordId = result.id;
 
         // If it's a lab report, extract lab data
         if (isLabReport && openai) {
@@ -385,8 +395,10 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
     }
 
     // Verify user exists
-    const userStmt = db.prepare('SELECT * FROM users WHERE id = ?');
-    const user = userStmt.get(user_id);
+    const userStmt = pool.query(`
+      SELECT * FROM users WHERE id = $1
+    `, [user_id]);
+    const user = userStmt.rows[0];
     
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -426,9 +438,11 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
           filename: file.filename,
           original_name: file.originalname
         });
-        const stmt = db.prepare(`INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        const aiResponse = await openai.chat.completions.create({
+        const stmt = pool.query(`
+          INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING id
+        `, [user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, await openai.chat.completions.create({
           model: "gpt-4",
           messages: [
             { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
@@ -436,11 +450,10 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
           ],
           temperature: 0.1,
           max_tokens: 2000
-        });
-        const aiContent = aiResponse.choices[0].message.content;
-        const result = stmt.run(user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, aiContent);
+        }).then(response => response.data.choices[0].message.content)]);
+        const result = stmt.rows[0];
 
-        const recordId = result.lastInsertRowid;
+        const recordId = result.id;
 
         // If it's a lab report, extract lab data
         if (isLabReport && openai) {
@@ -495,18 +508,17 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
 // Get user's PDF records
 app.get('/api/records', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         pr.*,
         u.username as uploaded_by_username,
         u.full_name as uploaded_by_name
       FROM pdf_records pr
       LEFT JOIN users u ON pr.uploaded_by = u.id
-      WHERE pr.user_id = ? 
+      WHERE pr.user_id = $1 
       ORDER BY pr.upload_date DESC
-    `);
-    const records = stmt.all(req.user.id);
-    res.json(records);
+    `, [req.user.id]);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -515,16 +527,16 @@ app.get('/api/records', authenticateToken, (req, res) => {
 // Get specific PDF record
 app.get('/api/records/:id', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         pr.*,
         u.username as uploaded_by_username,
         u.full_name as uploaded_by_name
       FROM pdf_records pr
       LEFT JOIN users u ON pr.uploaded_by = u.id
-      WHERE pr.id = ? AND pr.user_id = ?
-    `);
-    const record = stmt.get(req.params.id, req.user.id);
+      WHERE pr.id = $1 AND pr.user_id = $2
+    `, [req.params.id, req.user.id]);
+    const record = stmt.rows[0];
     
     if (!record) {
       return res.status(404).json({ error: 'Record not found' });
@@ -547,8 +559,10 @@ app.get('/api/pdf/:filename', (req, res) => {
   // Try to find the record for original name (optional, fallback to filename)
   let originalName = req.params.filename;
   try {
-    const stmt = db.prepare('SELECT * FROM pdf_records WHERE filename = ?');
-    const record = stmt.get(req.params.filename);
+    const stmt = pool.query(`
+      SELECT * FROM pdf_records WHERE filename = $1
+    `, [req.params.filename]);
+    const record = stmt.rows[0];
     if (record && record.original_name) {
       originalName = record.original_name;
     }
@@ -562,8 +576,10 @@ app.get('/api/pdf/:filename', (req, res) => {
 // Extract and analyze data from PDF
 app.get('/api/analyze/:id', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare('SELECT * FROM pdf_records WHERE id = ? AND user_id = ?');
-    const record = stmt.get(req.params.id, req.user.id);
+    const stmt = pool.query(`
+      SELECT * FROM pdf_records WHERE id = $1 AND user_id = $2
+    `, [req.params.id, req.user.id]);
+    const record = stmt.rows[0];
     
     if (!record) {
       return res.status(404).json({ error: 'Record not found' });
@@ -683,36 +699,33 @@ async function extractLabDataFromText(text, recordId, userId) {
       max_tokens: 2000
     });
 
-    const response = completion.choices[0].message.content;
+    const response = completion.data.choices[0].message.content;
     const labData = JSON.parse(response);
 
     // Store extracted data in database
     if (Array.isArray(labData) && labData.length > 0) {
-      const insertStmt = db.prepare(`
+      const insertStmt = pool.query(`
         INSERT INTO lab_values 
         (user_id, record_id, test_name, test_category, value, unit, reference_range, is_abnormal, test_date, confidence_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      for (const lab of labData) {
-        insertStmt.run(
-          userId,
-          recordId,
-          lab.test_name,
-          lab.test_category,
-          lab.value,
-          lab.unit,
-          lab.reference_range,
-          lab.is_abnormal,
-          lab.test_date,
-          0.9 // High confidence for AI extraction
-        );
-      }
-
-      // Mark record as lab data extracted
-      const updateStmt = db.prepare('UPDATE pdf_records SET lab_data_extracted = TRUE WHERE id = ?');
-      updateStmt.run(recordId);
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `, labData.map((lab, index) => [
+        userId,
+        recordId,
+        lab.test_name,
+        lab.test_category,
+        lab.value,
+        lab.unit,
+        lab.reference_range,
+        lab.is_abnormal,
+        lab.test_date,
+        0.9 // High confidence for AI extraction
+      ]));
     }
+
+    // Mark record as lab data extracted
+    const updateStmt = pool.query(`
+      UPDATE pdf_records SET lab_data_extracted = TRUE WHERE id = $1
+    `, [recordId]);
 
     return labData;
   } catch (error) {
@@ -748,9 +761,10 @@ async function detectLabReport(text) {
 // Get all users (admin only)
 app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const stmt = db.prepare('SELECT id, username, email, full_name, role, created_at FROM users ORDER BY created_at DESC');
-    const users = stmt.all();
-    res.json(users);
+    const stmt = pool.query(`
+      SELECT id, username, email, full_name, role, created_at FROM users ORDER BY created_at DESC
+    `);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -759,7 +773,7 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
 // Get all records from all users (admin only)
 app.get('/api/admin/records', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         pr.*,
         u.username,
@@ -769,8 +783,7 @@ app.get('/api/admin/records', authenticateToken, requireAdmin, (req, res) => {
       JOIN users u ON pr.user_id = u.id
       ORDER BY pr.upload_date DESC
     `);
-    const records = stmt.all();
-    res.json(records);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -779,7 +792,7 @@ app.get('/api/admin/records', authenticateToken, requireAdmin, (req, res) => {
 // Get records for a specific user (admin only)
 app.get('/api/admin/users/:userId/records', authenticateToken, requireAdmin, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         pr.*,
         u.username,
@@ -787,11 +800,10 @@ app.get('/api/admin/users/:userId/records', authenticateToken, requireAdmin, (re
         u.email
       FROM pdf_records pr
       JOIN users u ON pr.user_id = u.id
-      WHERE pr.user_id = ?
+      WHERE pr.user_id = $1
       ORDER BY pr.upload_date DESC
-    `);
-    const records = stmt.all(req.params.userId);
-    res.json(records);
+    `, [req.params.userId]);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -806,10 +818,11 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, (req, 
   }
 
   try {
-    const stmt = db.prepare('UPDATE users SET role = ? WHERE id = ?');
-    const result = stmt.run(role, req.params.userId);
+    const stmt = pool.query(`
+      UPDATE users SET role = $1 WHERE id = $2
+    `, [role, req.params.userId]);
     
-    if (result.changes === 0) {
+    if (stmt.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     
@@ -823,18 +836,21 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, (req, 
 app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, res) => {
   try {
     // First delete all lab values for this user
-    const deleteLabValues = db.prepare('DELETE FROM lab_values WHERE user_id = ?');
-    deleteLabValues.run(req.params.userId);
+    const deleteLabValues = pool.query(`
+      DELETE FROM lab_values WHERE user_id = $1
+    `, [req.params.userId]);
     
     // Then delete all records for this user
-    const deleteRecords = db.prepare('DELETE FROM pdf_records WHERE user_id = ?');
-    deleteRecords.run(req.params.userId);
+    const deleteRecords = pool.query(`
+      DELETE FROM pdf_records WHERE user_id = $1
+    `, [req.params.userId]);
     
     // Then delete the user
-    const deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
-    const result = deleteUser.run(req.params.userId);
+    const deleteUser = pool.query(`
+      DELETE FROM users WHERE id = $1
+    `, [req.params.userId]);
     
-    if (result.changes === 0) {
+    if (deleteUser.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     
@@ -849,18 +865,17 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, re
 // Get user's lab values
 app.get('/api/lab-values', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
         pr.upload_date
       FROM lab_values lv
       LEFT JOIN pdf_records pr ON lv.record_id = pr.id
-      WHERE lv.user_id = ?
+      WHERE lv.user_id = $1
       ORDER BY lv.test_date DESC, lv.extraction_date DESC
-    `);
-    const labValues = stmt.all(req.user.id);
-    res.json(labValues);
+    `, [req.user.id]);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -869,18 +884,17 @@ app.get('/api/lab-values', authenticateToken, (req, res) => {
 // Get lab values by test name (for trending)
 app.get('/api/lab-values/:testName', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
         pr.upload_date
       FROM lab_values lv
       LEFT JOIN pdf_records pr ON lv.record_id = pr.id
-      WHERE lv.user_id = ? AND lv.test_name LIKE ?
+      WHERE lv.user_id = $1 AND lv.test_name LIKE $2
       ORDER BY lv.test_date ASC, lv.extraction_date ASC
-    `);
-    const labValues = stmt.all(req.user.id, `%${req.params.testName}%`);
-    res.json(labValues);
+    `, [req.user.id, `%${req.params.testName}%`]);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -889,9 +903,10 @@ app.get('/api/lab-values/:testName', authenticateToken, (req, res) => {
 // Get lab categories
 app.get('/api/lab-categories', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare('SELECT * FROM lab_categories ORDER BY category_name');
-    const categories = stmt.all();
-    res.json(categories);
+    const stmt = pool.query(`
+      SELECT * FROM lab_categories ORDER BY category_name
+    `);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -900,18 +915,17 @@ app.get('/api/lab-categories', authenticateToken, (req, res) => {
 // Get lab values by category
 app.get('/api/lab-values/category/:category', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
         pr.upload_date
       FROM lab_values lv
       LEFT JOIN pdf_records pr ON lv.record_id = pr.id
-      WHERE lv.user_id = ? AND lv.test_category = ?
+      WHERE lv.user_id = $1 AND lv.test_category = $2
       ORDER BY lv.test_date DESC, lv.extraction_date DESC
-    `);
-    const labValues = stmt.all(req.user.id, req.params.category);
-    res.json(labValues);
+    `, [req.user.id, req.params.category]);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -920,7 +934,7 @@ app.get('/api/lab-values/category/:category', authenticateToken, (req, res) => {
 // Get lab trends for a specific test
 app.get('/api/lab-values/trends/:testName', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
@@ -928,11 +942,10 @@ app.get('/api/lab-values/trends/:testName', authenticateToken, (req, res) => {
         pr.record_type
       FROM lab_values lv
       LEFT JOIN pdf_records pr ON lv.record_id = pr.id
-      WHERE lv.user_id = ? AND lv.test_name LIKE ?
+      WHERE lv.user_id = $1 AND lv.test_name LIKE $2
       ORDER BY lv.test_date ASC, lv.extraction_date ASC
-    `);
-    const labValues = stmt.all(req.user.id, `%${req.params.testName}%`);
-    res.json(labValues);
+    `, [req.user.id, `%${req.params.testName}%`]);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -942,38 +955,38 @@ app.get('/api/lab-values/trends/:testName', authenticateToken, (req, res) => {
 app.get('/api/lab-analytics/summary', authenticateToken, (req, res) => {
   try {
     // Get total lab values
-    const totalStmt = db.prepare(`
-      SELECT COUNT(*) as total FROM lab_values WHERE user_id = ?
-    `);
-    const total = totalStmt.get(req.user.id).total;
+    const totalStmt = pool.query(`
+      SELECT COUNT(*) as total FROM lab_values WHERE user_id = $1
+    `, [req.user.id]);
+    const total = totalStmt.rows[0].total;
 
     // Get values by category
-    const categoryStmt = db.prepare(`
+    const categoryStmt = pool.query(`
       SELECT test_category, COUNT(*) as count 
       FROM lab_values 
-      WHERE user_id = ? 
+      WHERE user_id = $1 
       GROUP BY test_category
-    `);
-    const categories = categoryStmt.all(req.user.id);
+    `, [req.user.id]);
+    const categories = categoryStmt.rows;
 
     // Get abnormal values
-    const abnormalStmt = db.prepare(`
+    const abnormalStmt = pool.query(`
       SELECT COUNT(*) as count FROM lab_values 
-      WHERE user_id = ? AND is_abnormal = 1
-    `);
-    const abnormal = abnormalStmt.get(req.user.id).count;
+      WHERE user_id = $1 AND is_abnormal = TRUE
+    `, [req.user.id]);
+    const abnormal = abnormalStmt.rows[0].count;
 
     // Get recent trends (last 30 days)
-    const recentStmt = db.prepare(`
+    const recentStmt = pool.query(`
       SELECT lv.test_name, lv.value, lv.unit, lv.test_date, pr.upload_date
       FROM lab_values lv
       LEFT JOIN pdf_records pr ON lv.record_id = pr.id
-      WHERE lv.user_id = ? 
-      AND lv.extraction_date >= datetime('now', '-30 days')
+      WHERE lv.user_id = $1 
+      AND lv.extraction_date >= CURRENT_DATE - INTERVAL '30 days'
       ORDER BY lv.extraction_date DESC
       LIMIT 20
-    `);
-    const recent = recentStmt.all(req.user.id);
+    `, [req.user.id]);
+    const recent = recentStmt.rows;
 
     res.json({
       total_lab_values: total,
@@ -989,15 +1002,14 @@ app.get('/api/lab-analytics/summary', authenticateToken, (req, res) => {
 // Get all available test names for a user
 app.get('/api/lab-values/test-names', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT DISTINCT test_name, test_category, COUNT(*) as count
       FROM lab_values 
-      WHERE user_id = ?
+      WHERE user_id = $1
       GROUP BY test_name, test_category
       ORDER BY count DESC, test_name ASC
-    `);
-    const testNames = stmt.all(req.user.id);
-    res.json(testNames);
+    `, [req.user.id]);
+    res.json(stmt.rows);
   } catch (error) {
     return res.status(500).json({ error: 'Database error' });
   }
@@ -1007,16 +1019,19 @@ app.get('/api/lab-values/test-names', authenticateToken, (req, res) => {
 app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res) => {
   try {
     // Get the record
-    const recordStmt = db.prepare('SELECT * FROM pdf_records WHERE id = ? AND user_id = ?');
-    const record = recordStmt.get(req.params.recordId, req.user.id);
+    const recordStmt = pool.query(`
+      SELECT * FROM pdf_records WHERE id = $1 AND user_id = $2
+    `, [req.params.recordId, req.user.id]);
+    const record = recordStmt.rows[0];
     
     if (!record) {
       return res.status(404).json({ error: 'Record not found' });
     }
 
     // Delete existing lab values for this record
-    const deleteStmt = db.prepare('DELETE FROM lab_values WHERE record_id = ?');
-    deleteStmt.run(req.params.recordId);
+    const deleteStmt = pool.query(`
+      DELETE FROM lab_values WHERE record_id = $1
+    `, [req.params.recordId]);
 
     // Re-extract lab data
     if (openai) {
@@ -1036,7 +1051,7 @@ app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res
 // Get lab trends grouped by record_type and test_name
 app.get('/api/lab-values/grouped-trends', authenticateToken, (req, res) => {
   try {
-    const stmt = db.prepare(`
+    const stmt = pool.query(`
       SELECT 
         pr.record_type,
         lv.test_name,
@@ -1049,10 +1064,10 @@ app.get('/api/lab-values/grouped-trends', authenticateToken, (req, res) => {
         pr.upload_date
       FROM lab_values lv
       LEFT JOIN pdf_records pr ON lv.record_id = pr.id
-      WHERE lv.user_id = ?
+      WHERE lv.user_id = $1
       ORDER BY pr.record_type, lv.test_name, lv.test_date ASC, lv.extraction_date ASC
-    `);
-    const rows = stmt.all(req.user.id);
+    `, [req.user.id]);
+    const rows = stmt.rows;
     // Group by record_type and test_name
     const grouped = {};
     for (const row of rows) {
