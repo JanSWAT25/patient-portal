@@ -2,8 +2,8 @@ services:
   - type: web
     name: patient-portal
     env: node
-    buildCommand: ./build-for-render.sh
-    startCommand: npm start
+    nodeVersion: 18
+    startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -13,6 +13,17 @@ services:
         generateValue: true
       - key: DATABASE_URL
         sync: false
+        required: true
+      - key: DB_HOST
+        value: db.vfqxqgpmlybmbucpfnoc.supabase.co
+      - key: DB_PORT
+        value: 5432
+      - key: DB_NAME
+        value: postgres
+      - key: DB_USER
+        value: postgres
+      - key: DB_PASSWORD
+        value: kymsos-hisqe8-zeGqij
       - key: UPLOAD_DIR
         value: /opt/render/project/src/uploads
     healthCheckPath: /api/records

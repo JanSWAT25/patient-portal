@@ -37,10 +37,27 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Database setup
-const pool = new Pool({ 
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+console.log('Database URL configured:', process.env.DATABASE_URL ? 'Yes' : 'No');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+
+let pool;
+if (process.env.DATABASE_URL) {
+  // Try connection string first
+  pool = new Pool({ 
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  });
+} else {
+  // Fallback to individual parameters
+  pool = new Pool({ 
+    host: process.env.DB_HOST || 'db.vfqxqgpmlybmbucpfnoc.supabase.co',
+    port: process.env.DB_PORT || 5432,
+    database: process.env.DB_NAME || 'postgres',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'kymsos-hisqe8-zeGqij',
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  });
+}
 
 // Initialize database tables
 async function initializeDatabase() {
