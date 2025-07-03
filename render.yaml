@@ -12,19 +12,15 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: DATABASE_URL
-        sync: false
-        required: true
-      - key: DB_HOST
-        value: db.vfqxqgpmlybmbucpfnoc.supabase.co
-      - key: DB_PORT
-        value: 5432
-      - key: DB_NAME
-        value: postgres
-      - key: DB_USER
-        value: postgres
-      - key: DB_PASSWORD
-        value: kymsos-hisqe8-zeGqij
+        fromDatabase:
+          name: patient-portal-db
+          property: connectionString
       - key: UPLOAD_DIR
         value: /opt/render/project/src/uploads
     healthCheckPath: /api/records
-    autoDeploy: true 
+    autoDeploy: true
+
+  - type: pserv
+    name: patient-portal-db
+    env: postgresql
+    plan: free 
