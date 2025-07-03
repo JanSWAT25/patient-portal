@@ -998,7 +998,7 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
     9. Be thorough but concise in analysis
     10. Focus on measurements that can be tracked over time
 
-    Return ONLY valid JSON - no additional text.
+    CRITICAL: Return ONLY valid JSON. Do not include any explanatory text, introductions, or conclusions. Start with { and end with }. Do not say "As an AI" or any other text.
     `;
 
     const completion = await openai.chat.completions.create({
@@ -1006,7 +1006,7 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
       messages: [
         {
           role: "system",
-          content: "You are an advanced medical AI analyst. Provide comprehensive medical analysis in JSON format."
+          content: "You are an advanced medical AI analyst. You must respond with ONLY valid JSON. Do not include any text before or after the JSON. Do not explain, introduce, or conclude. Just return the JSON object."
         },
         {
           role: "user",
@@ -1018,7 +1018,25 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
     });
 
     const response = completion.choices[0].message.content;
-    const analysis = JSON.parse(response);
+    
+    // Clean the response to extract only JSON
+    let jsonResponse = response;
+    
+    // Remove any text before the first {
+    const jsonStart = response.indexOf('{');
+    if (jsonStart > 0) {
+      jsonResponse = response.substring(jsonStart);
+    }
+    
+    // Remove any text after the last }
+    const jsonEnd = jsonResponse.lastIndexOf('}');
+    if (jsonEnd > 0 && jsonEnd < jsonResponse.length - 1) {
+      jsonResponse = jsonResponse.substring(0, jsonEnd + 1);
+    }
+    
+    console.log('Cleaned AI response:', jsonResponse.substring(0, 200) + '...');
+    
+    const analysis = JSON.parse(jsonResponse);
 
     console.log(`AI analysis completed for record ${recordId}`);
 
@@ -1521,9 +1539,42 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
     const analysis = result.rows[0];
     
     try {
-      const parsedNumericalData = analysis.numerical_data && analysis.numerical_data.trim() !== '' 
-        ? JSON.parse(analysis.numerical_data) 
-        : { lab_tests: [], medical_measurements: [], graph_data: {} };
+      let parsedNumericalData = { lab_tests: [], medical_measurements: [], graph_data: {} };
+      
+      // Handle both string and JSONB types
+      if (analysis.numerical_data) {
+        if (typeof analysis.numerical_data === 'string') {
+          // String type - parse JSON
+          if (analysis.numerical_data.trim() !== '') {
+            parsedNumericalData = JSON.parse(analysis.numerical_data);
+          }
+        } else {
+          // JSONB type - already parsed
+          parsedNumericalData = analysis.numerical_data;
+        }
+      }
+      
+      let parsedTrends = {};
+      if (analysis.trends) {
+        if (typeof analysis.trends === 'string') {
+          if (analysis.trends.trim() !== '') {
+            parsedTrends = JSON.parse(analysis.trends);
+          }
+        } else {
+          parsedTrends = analysis.trends;
+        }
+      }
+      
+      let parsedRecommendations = [];
+      if (analysis.recommendations) {
+        if (typeof analysis.recommendations === 'string') {
+          if (analysis.recommendations.trim() !== '') {
+            parsedRecommendations = JSON.parse(analysis.recommendations);
+          }
+        } else {
+          parsedRecommendations = analysis.recommendations;
+        }
+      }
       
       res.json({
         ...analysis,
@@ -1531,12 +1582,8 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
         lab_tests: parsedNumericalData.lab_tests || [],
         medical_measurements: parsedNumericalData.medical_measurements || [],
         graph_data: parsedNumericalData.graph_data || {},
-        trends: analysis.trends && analysis.trends.trim() !== '' 
-          ? JSON.parse(analysis.trends) 
-          : {},
-        recommendations: analysis.recommendations && analysis.recommendations.trim() !== '' 
-          ? JSON.parse(analysis.recommendations) 
-          : []
+        trends: parsedTrends,
+        recommendations: parsedRecommendations
       });
     } catch (parseError) {
       console.error('Error parsing JSON for analysis ID:', analysis.id, parseError);
@@ -1574,9 +1621,42 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
     
     const analyses = result.rows.map(row => {
       try {
-        const parsedNumericalData = row.numerical_data && row.numerical_data.trim() !== '' 
-          ? JSON.parse(row.numerical_data) 
-          : { lab_tests: [], medical_measurements: [], graph_data: {} };
+        let parsedNumericalData = { lab_tests: [], medical_measurements: [], graph_data: {} };
+        
+        // Handle both string and JSONB types
+        if (row.numerical_data) {
+          if (typeof row.numerical_data === 'string') {
+            // String type - parse JSON
+            if (row.numerical_data.trim() !== '') {
+              parsedNumericalData = JSON.parse(row.numerical_data);
+            }
+          } else {
+            // JSONB type - already parsed
+            parsedNumericalData = row.numerical_data;
+          }
+        }
+        
+        let parsedTrends = {};
+        if (row.trends) {
+          if (typeof row.trends === 'string') {
+            if (row.trends.trim() !== '') {
+              parsedTrends = JSON.parse(row.trends);
+            }
+          } else {
+            parsedTrends = row.trends;
+          }
+        }
+        
+        let parsedRecommendations = [];
+        if (row.recommendations) {
+          if (typeof row.recommendations === 'string') {
+            if (row.recommendations.trim() !== '') {
+              parsedRecommendations = JSON.parse(row.recommendations);
+            }
+          } else {
+            parsedRecommendations = row.recommendations;
+          }
+        }
         
         return {
           ...row,
@@ -1584,12 +1664,8 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
           lab_tests: parsedNumericalData.lab_tests || [],
           medical_measurements: parsedNumericalData.medical_measurements || [],
           graph_data: parsedNumericalData.graph_data || {},
-          trends: row.trends && row.trends.trim() !== '' 
-            ? JSON.parse(row.trends) 
-            : {},
-          recommendations: row.recommendations && row.recommendations.trim() !== '' 
-            ? JSON.parse(row.recommendations) 
-            : []
+          trends: parsedTrends,
+          recommendations: parsedRecommendations
         };
       } catch (parseError) {
         console.error('Error parsing JSON for analysis ID:', row.id, parseError);
