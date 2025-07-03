@@ -246,7 +246,7 @@ app.post('/api/login', (req, res) => {
 });
 
 // Register endpoint
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   const { username, password, email, full_name } = req.body;
 
   if (!username || !password || !email || !full_name) {
@@ -256,11 +256,26 @@ app.post('/api/register', (req, res) => {
   const hashedPassword = bcrypt.hashSync(password, 10);
 
   try {
-    const stmt = pool.query(`
-      INSERT INTO users (username, password, email, full_name) 
+    // Check for existing username or email
+    const existingUser = await pool.query(
+      'SELECT * FROM users WHERE username = $1 OR email = $2',
+      [username, email]
+    );
+    if (existingUser.rows.length > 0) {
+      if (existingUser.rows[0].username === username) {
+        return res.status(400).json({ error: 'Username already exists' });
+      }
+      if (existingUser.rows[0].email === email) {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+    }
+
+    const stmt = await pool.query(
+      `INSERT INTO users (username, password, email, full_name) 
       VALUES ($1, $2, $3, $4)
-      RETURNING id, username, email, full_name, role
-    `, [username, hashedPassword, email, full_name]);
+      RETURNING id, username, email, full_name, role`,
+      [username, hashedPassword, email, full_name]
+    );
     const result = stmt.rows[0];
 
     const token = jwt.sign(
@@ -281,8 +296,10 @@ app.post('/api/register', (req, res) => {
     });
   } catch (error) {
     if (error.code === '23505') { // Unique constraint violation
+      // Fallback in case of race condition
       return res.status(400).json({ error: 'Username or email already exists' });
     }
+    console.error('Registration error:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
