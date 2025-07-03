@@ -460,22 +460,33 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
           filename: file.filename,
           original_name: file.originalname
         });
-        const stmt = pool.query(`
+
+        // Generate PDF analysis if OpenAI is available
+        let pdfAnalysis = null;
+        if (openai) {
+          try {
+            const openaiResponse = await openai.chat.completions.create({
+              model: "gpt-4",
+              messages: [
+                { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
+                { role: "user", content: extractedText.substring(0, 12000) }
+              ],
+              temperature: 0.1,
+              max_tokens: 2000
+            });
+            pdfAnalysis = openaiResponse.choices[0].message.content;
+          } catch (openaiError) {
+            console.error('OpenAI analysis failed:', openaiError);
+            pdfAnalysis = null;
+          }
+        }
+
+        const result = await pool.query(`
           INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           RETURNING id
-        `, [req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, await openai.chat.completions.create({
-          model: "gpt-4",
-          messages: [
-            { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
-            { role: "user", content: extractedText.substring(0, 12000) }
-          ],
-          temperature: 0.1,
-          max_tokens: 2000
-        }).then(response => response.data.choices[0].message.content)]);
-        const result = stmt.rows[0];
-
-        const recordId = result.id;
+        `, [req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, pdfAnalysis]);
+        const recordId = result.rows[0].id;
 
         // If it's a lab report, extract lab data
         if (isLabReport && openai) {
