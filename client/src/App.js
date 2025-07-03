@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
 import Dashboard from './pages/Dashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import Upload from './pages/Upload';
@@ -31,6 +32,10 @@ function App() {
           <Route 
             path="/register" 
             element={isAuthenticated ? <Navigate to="/dashboard" /> : <Register />} 
+          />
+          <Route 
+            path="/forgot-password" 
+            element={isAuthenticated ? <Navigate to="/dashboard" /> : <ForgotPassword />} 
           />
           <Route 
             path="/admin" 

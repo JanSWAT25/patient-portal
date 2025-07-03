@@ -127,6 +127,19 @@ async function initializeDatabase() {
       ON CONFLICT (category_name) DO NOTHING
     `);
 
+    // Password reset tokens table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id)
+      )
+    `);
+
     // Create default admin user
     const adminPassword = bcrypt.hashSync('admin123', 10);
     await pool.query(`
@@ -302,6 +315,102 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: 'Username or email already exists' });
     }
     console.error('Registration error:', error);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Forgot password endpoint
+app.post('/api/forgot-password', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  try {
+    // Check if user exists
+    const userResult = await pool.query(
+      'SELECT id, username, email, full_name FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      // Don't reveal if email exists or not for security
+      return res.json({ message: 'If an account with that email exists, a password reset link has been sent.' });
+    }
+
+    const user = userResult.rows[0];
+
+    // Generate reset token
+    const resetToken = uuidv4();
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 1); // Token expires in 1 hour
+
+    // Store reset token
+    await pool.query(
+      'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [user.id, resetToken, expiresAt]
+    );
+
+    // In a real application, you would send an email here
+    // For demo purposes, we'll just return the token
+    res.json({ 
+      message: 'Password reset link sent to your email',
+      resetToken: resetToken, // Remove this in production
+      expiresAt: expiresAt
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Reset password endpoint
+app.post('/api/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token and new password are required' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  }
+
+  try {
+    // Find valid reset token
+    const tokenResult = await pool.query(
+      `SELECT prt.*, u.username, u.email 
+       FROM password_reset_tokens prt 
+       JOIN users u ON prt.user_id = u.id 
+       WHERE prt.token = $1 AND prt.expires_at > NOW() AND prt.used = FALSE`,
+      [token]
+    );
+
+    if (tokenResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const resetToken = tokenResult.rows[0];
+
+    // Hash new password
+    const hashedPassword = bcrypt.hashSync(newPassword, 10);
+
+    // Update user password
+    await pool.query(
+      'UPDATE users SET password = $1 WHERE id = $2',
+      [hashedPassword, resetToken.user_id]
+    );
+
+    // Mark token as used
+    await pool.query(
+      'UPDATE password_reset_tokens SET used = TRUE WHERE id = $1',
+      [resetToken.id]
+    );
+
+    res.json({ message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
@@ -542,9 +651,9 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
 });
 
 // Get user's PDF records
-app.get('/api/records', authenticateToken, (req, res) => {
+app.get('/api/records', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         pr.*,
         u.username as uploaded_by_username,
@@ -554,16 +663,17 @@ app.get('/api/records', authenticateToken, (req, res) => {
       WHERE pr.user_id = $1 
       ORDER BY pr.upload_date DESC
     `, [req.user.id]);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching records:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get specific PDF record
-app.get('/api/records/:id', authenticateToken, (req, res) => {
+app.get('/api/records/:id', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         pr.*,
         u.username as uploaded_by_username,
@@ -572,13 +682,14 @@ app.get('/api/records/:id', authenticateToken, (req, res) => {
       LEFT JOIN users u ON pr.uploaded_by = u.id
       WHERE pr.id = $1 AND pr.user_id = $2
     `, [req.params.id, req.user.id]);
-    const record = stmt.rows[0];
+    const record = result.rows[0];
     
     if (!record) {
       return res.status(404).json({ error: 'Record not found' });
     }
     res.json(record);
   } catch (error) {
+    console.error('Error fetching record:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
