@@ -120,10 +120,11 @@ const Dashboard = () => {
           color="border-purple-500"
         />
         <StatCard
-          title="Health Score"
-          value="85%"
-          icon={Heart}
-          color="border-red-500"
+          title="Lab Analytics"
+          value="View Trends"
+          icon={TrendingUp}
+          color="border-orange-500"
+          link="/lab-analytics"
         />
       </div>
 

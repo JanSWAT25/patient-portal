@@ -873,26 +873,34 @@ async function extractLabDataFromText(text, recordId, userId) {
 
     // Store extracted data in database
     if (Array.isArray(labData) && labData.length > 0) {
-      const insertStmt = pool.query(`
-        INSERT INTO lab_values 
-        (user_id, record_id, test_name, test_category, value, unit, reference_range, is_abnormal, test_date, confidence_score)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      `, labData.map((lab, index) => [
-        userId,
-        recordId,
-        lab.test_name,
-        lab.test_category,
-        lab.value,
-        lab.unit,
-        lab.reference_range,
-        lab.is_abnormal,
-        lab.test_date,
-        0.9 // High confidence for AI extraction
-      ]));
+      console.log(`Extracting ${labData.length} lab values for record ${recordId}`);
+      
+      for (const lab of labData) {
+        try {
+          await pool.query(`
+            INSERT INTO lab_values 
+            (user_id, record_id, test_name, test_category, value, unit, reference_range, is_abnormal, test_date, confidence_score)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          `, [
+            userId,
+            recordId,
+            lab.test_name,
+            lab.test_category,
+            lab.value,
+            lab.unit,
+            lab.reference_range,
+            lab.is_abnormal,
+            lab.test_date,
+            0.9 // High confidence for AI extraction
+          ]);
+        } catch (insertError) {
+          console.error('Error inserting lab value:', insertError);
+        }
+      }
     }
 
     // Mark record as lab data extracted
-    const updateStmt = pool.query(`
+    await pool.query(`
       UPDATE pdf_records SET lab_data_extracted = TRUE WHERE id = $1
     `, [recordId]);
 
@@ -912,13 +920,19 @@ async function detectLabReport(text) {
       'sodium', 'potassium', 'chloride', 'bicarbonate', 'calcium',
       'albumin', 'bilirubin', 'alt', 'ast', 'alkaline phosphatase',
       'tsh', 't3', 't4', 'hba1c', 'platelets', 'white blood cells',
-      'red blood cells', 'wbc', 'rbc', 'hct', 'mcv', 'mch', 'mchc'
+      'red blood cells', 'wbc', 'rbc', 'hct', 'mcv', 'mch', 'mchc',
+      'mg/dl', 'mmol/l', 'g/dl', 'units/l', 'mcg/dl', 'ng/ml',
+      'reference', 'normal', 'abnormal', 'high', 'low', 'range'
     ];
 
     const textLower = text.toLowerCase();
     const matches = labKeywords.filter(keyword => textLower.includes(keyword));
     
-    return matches.length >= 3; // If 3 or more lab keywords found, consider it a lab report
+    console.log(`Lab report detection: Found ${matches.length} lab keywords`);
+    console.log('Matched keywords:', matches);
+    
+    // More sensitive detection - if 2 or more lab keywords found, consider it a lab report
+    return matches.length >= 2;
   } catch (error) {
     console.error('Error detecting lab report:', error);
     return false;
