@@ -102,6 +102,19 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleDeleteRecord = async (recordId, recordName) => {
+    if (window.confirm(`Are you sure you want to delete "${recordName}"? This action cannot be undone.`)) {
+      try {
+        await axios.delete(`/api/admin/records/${recordId}`);
+        fetchAdminData(); // Refresh data
+        alert('Record deleted successfully!');
+      } catch (error) {
+        console.error('Error deleting record:', error);
+        alert('Failed to delete record. Please try again.');
+      }
+    }
+  };
+
   const handleFileUpload = async (e) => {
     e.preventDefault();
     
@@ -441,14 +454,24 @@ const AdminDashboard = () => {
                           {new Date(record.upload_date).toLocaleDateString()}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <a
-                            href={`/api/pdf/${record.filename}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-medical-600 hover:text-medical-900"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </a>
+                          <div className="flex space-x-2">
+                            <a
+                              href={`/api/pdf/${record.filename}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-medical-600 hover:text-medical-900"
+                              title="View Record"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </a>
+                            <button
+                              onClick={() => handleDeleteRecord(record.id, record.original_name)}
+                              className="text-red-600 hover:text-red-900"
+                              title="Delete Record"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

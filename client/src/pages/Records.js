@@ -7,7 +7,9 @@ import {
   Filter, 
   Download,
   User,
-  Shield
+  Shield,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -17,6 +19,8 @@ const Records = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   useEffect(() => {
     fetchRecords();
@@ -58,6 +62,24 @@ const Records = () => {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const handleDelete = async (recordId, recordName) => {
+    if (!window.confirm(`Are you sure you want to delete "${recordName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      await axios.delete(`/api/records/${recordId}`);
+      setRecords(records.filter(record => record.id !== recordId));
+      alert('Record deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting record:', error);
+      alert('Failed to delete record. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   if (loading) {
@@ -142,16 +164,24 @@ const Records = () => {
                     )}
                   </div>
                 </div>
-                <div className="mt-3 md:mt-0 md:ml-6 flex-shrink-0">
+                <div className="mt-3 md:mt-0 md:ml-6 flex-shrink-0 flex space-x-2">
                   <a
                     href={`/api/pdf/${record.filename}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center px-4 py-2 border border-medical-300 text-sm font-medium rounded-md text-medical-700 bg-medical-50 hover:bg-medical-100"
+                    className="inline-flex items-center px-4 py-2 border border-medical-300 text-sm font-medium rounded-md text-medical-700 bg-medical-50 hover:bg-medical-100 transition-colors"
                   >
                     <Download className="h-4 w-4 mr-2" />
                     Download
                   </a>
+                  <button
+                    onClick={() => handleDelete(record.id, record.original_name)}
+                    disabled={deleting}
+                    className="inline-flex items-center px-4 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    {deleting ? 'Deleting...' : 'Delete'}
+                  </button>
                 </div>
               </li>
             ))}

@@ -702,12 +702,64 @@ app.get('/api/records', authenticateToken, async (req, res) => {
         u.full_name as uploaded_by_name
       FROM pdf_records pr
       LEFT JOIN users u ON pr.uploaded_by = u.id
-      WHERE pr.user_id = $1 
+      WHERE pr.user_id = $1
       ORDER BY pr.upload_date DESC
     `, [req.user.id]);
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching records:', error);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Delete a record (user can only delete their own records)
+app.delete('/api/records/:recordId', authenticateToken, async (req, res) => {
+  try {
+    // First, get the record to check ownership and file path
+    const recordResult = await pool.query(`
+      SELECT * FROM pdf_records WHERE id = $1 AND user_id = $2
+    `, [req.params.recordId, req.user.id]);
+    
+    if (recordResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Record not found or access denied' });
+    }
+    
+    const record = recordResult.rows[0];
+    
+    // Delete associated lab values and AI analysis
+    await pool.query(`
+      DELETE FROM lab_values WHERE record_id = $1
+    `, [req.params.recordId]);
+    
+    await pool.query(`
+      DELETE FROM ai_lab_analysis WHERE record_id = $1
+    `, [req.params.recordId]);
+    
+    // Delete the record from database
+    await pool.query(`
+      DELETE FROM pdf_records WHERE id = $1
+    `, [req.params.recordId]);
+    
+    // Delete the physical file
+    try {
+      if (fs.existsSync(record.file_path)) {
+        fs.unlinkSync(record.file_path);
+        console.log(`Deleted file: ${record.file_path}`);
+      }
+    } catch (fileError) {
+      console.error('Error deleting physical file:', fileError);
+      // Continue even if file deletion fails
+    }
+    
+    res.json({ 
+      message: 'Record deleted successfully',
+      deleted_record: {
+        id: record.id,
+        filename: record.original_name
+      }
+    });
+  } catch (error) {
+    console.error('Error deleting record:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
@@ -1136,6 +1188,59 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (r
     res.json({ message: 'User and all associated records deleted successfully' });
   } catch (error) {
     console.error('Error deleting user:', error);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Delete any record (admin only)
+app.delete('/api/admin/records/:recordId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    // Get the record
+    const recordResult = await pool.query(`
+      SELECT * FROM pdf_records WHERE id = $1
+    `, [req.params.recordId]);
+    
+    if (recordResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+    
+    const record = recordResult.rows[0];
+    
+    // Delete associated lab values and AI analysis
+    await pool.query(`
+      DELETE FROM lab_values WHERE record_id = $1
+    `, [req.params.recordId]);
+    
+    await pool.query(`
+      DELETE FROM ai_lab_analysis WHERE record_id = $1
+    `, [req.params.recordId]);
+    
+    // Delete the record from database
+    await pool.query(`
+      DELETE FROM pdf_records WHERE id = $1
+    `, [req.params.recordId]);
+    
+    // Delete the physical file
+    try {
+      if (fs.existsSync(record.file_path)) {
+        fs.unlinkSync(record.file_path);
+        console.log(`Admin deleted file: ${record.file_path}`);
+      }
+    } catch (fileError) {
+      console.error('Error deleting physical file:', fileError);
+      // Continue even if file deletion fails
+    }
+    
+    res.json({ 
+      message: 'Record deleted successfully by admin',
+      deleted_record: {
+        id: record.id,
+        filename: record.original_name,
+        user_id: record.user_id
+      }
+    });
+  } catch (error) {
+    console.error('Error deleting record:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
