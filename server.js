@@ -206,15 +206,16 @@ const requireAdmin = (req, res, next) => {
 // Routes
 
 // Login endpoint
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
   try {
-    const stmt = pool.query(`
-      SELECT * FROM users WHERE username = $1
-    `, [username]);
+    const stmt = await pool.query(
+      `SELECT * FROM users WHERE username = $1`,
+      [username]
+    );
     const user = stmt.rows[0];
-    
+
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -241,6 +242,7 @@ app.post('/api/login', (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Login error:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
