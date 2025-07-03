@@ -928,13 +928,26 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
       "lab_tests_found": [
         {
           "test_name": "Exact test name",
-          "test_category": "Category (Hematology, Chemistry, Lipids, Thyroid, Diabetes, Liver, Kidney, Other)",
+          "test_category": "Category (Hematology, Chemistry, Lipids, Thyroid, Diabetes, Liver, Kidney, Cardiac, Imaging, Other)",
           "value": numeric_value_or_null,
           "unit": "unit if available",
           "reference_range": "normal range if available",
           "is_abnormal": boolean,
           "test_date": "YYYY-MM-DD if found",
           "interpretation": "What this value means",
+          "trend": "improving/declining/stable/unknown compared to previous data"
+        }
+      ],
+      "medical_measurements": [
+        {
+          "measurement_name": "Name of measurement (e.g., Heart Rate, Blood Pressure, Ejection Fraction, Dimensions)",
+          "measurement_category": "Category (Cardiac, Respiratory, Neurological, Imaging, Vital Signs, Other)",
+          "value": numeric_value_or_null,
+          "unit": "unit if available",
+          "reference_range": "normal range if available",
+          "is_abnormal": boolean,
+          "measurement_date": "YYYY-MM-DD if found",
+          "interpretation": "What this measurement means",
           "trend": "improving/declining/stable/unknown compared to previous data"
         }
       ],
@@ -947,24 +960,43 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
         "recommendations": ["List of recommendations based on findings"]
       },
       "trend_analysis": {
-        "improving_tests": ["Tests showing improvement"],
-        "declining_tests": ["Tests showing decline"],
-        "stable_tests": ["Tests remaining stable"],
+        "improving_measurements": ["Measurements showing improvement"],
+        "declining_measurements": ["Measurements showing decline"],
+        "stable_measurements": ["Measurements remaining stable"],
         "new_abnormalities": ["New abnormal findings"]
       },
       "comparison_insights": "Analysis of how current results compare to previous data",
-      "action_items": ["Specific actions the patient should consider"]
+      "action_items": ["Specific actions the patient should consider"],
+      "graph_data": {
+        "chartable_values": [
+          {
+            "name": "Measurement name for chart",
+            "value": numeric_value,
+            "date": "YYYY-MM-DD",
+            "category": "Chart category",
+            "unit": "unit"
+          }
+        ]
+      }
     }
 
     IMPORTANT GUIDELINES:
-    1. If the document contains lab results, extract ALL numerical values
-    2. If the document is not primarily lab results, provide a comprehensive medical summary
-    3. Compare current findings with previous data when available
-    4. Identify trends, improvements, or concerning changes
-    5. Provide actionable recommendations
-    6. Assess overall health risk level
-    7. Be thorough but concise in analysis
-    8. If no lab data is found, focus on medical insights and recommendations
+    1. Extract ALL numerical values from ANY medical document (labs, imaging, vital signs, etc.)
+    2. For imaging reports (CT, MRI, X-ray, ECG, Echo), extract measurements like:
+       - Heart rate, blood pressure, ejection fraction
+       - Dimensions, volumes, percentages
+       - Any numerical findings that can be tracked over time
+    3. For CT scans, look for measurements like:
+       - Dimensions, volumes, densities
+       - Percentages, ratios, scores
+       - Any quantitative findings
+    4. Compare current findings with previous data when available
+    5. Identify trends, improvements, or concerning changes
+    6. Provide actionable recommendations
+    7. Assess overall health risk level
+    8. Create chartable data for graphs
+    9. Be thorough but concise in analysis
+    10. Focus on measurements that can be tracked over time
 
     Return ONLY valid JSON - no additional text.
     `;
@@ -992,8 +1024,10 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
 
     // Store the comprehensive analysis with proper JSON validation
     const numericalData = analysis.lab_tests_found ? JSON.stringify(analysis.lab_tests_found) : '[]';
+    const medicalMeasurements = analysis.medical_measurements ? JSON.stringify(analysis.medical_measurements) : '[]';
     const trendsData = analysis.trend_analysis ? JSON.stringify(analysis.trend_analysis) : '{}';
     const recommendationsData = analysis.recommendations ? JSON.stringify(analysis.recommendations) : '[]';
+    const graphData = analysis.graph_data ? JSON.stringify(analysis.graph_data) : '{}';
     
     await pool.query(`
       INSERT INTO ai_lab_analysis 
@@ -1005,19 +1039,28 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
       'comprehensive',
       'all_tests',
       analysis.document_summary || 'No summary available',
-      numericalData,
+      JSON.stringify({
+        lab_tests: analysis.lab_tests_found || [],
+        medical_measurements: analysis.medical_measurements || [],
+        graph_data: analysis.graph_data || {}
+      }),
       trendsData,
       recommendationsData,
       analysis.risk_assessment?.overall_risk || 'unknown',
       0.9
     ]);
 
-    // Extract and store individual lab values if found
-    if (analysis.lab_tests_found && analysis.lab_tests_found.length > 0) {
-      console.log(`Extracting ${analysis.lab_tests_found.length} lab values from AI analysis`);
+    // Extract and store individual lab values and medical measurements if found
+    const allMeasurements = [
+      ...(analysis.lab_tests_found || []),
+      ...(analysis.medical_measurements || [])
+    ];
+    
+    if (allMeasurements.length > 0) {
+      console.log(`Extracting ${allMeasurements.length} measurements from AI analysis`);
       
-      for (const lab of analysis.lab_tests_found) {
-        if (lab.value !== null && lab.value !== undefined) {
+      for (const measurement of allMeasurements) {
+        if (measurement.value !== null && measurement.value !== undefined) {
           try {
             await pool.query(`
               INSERT INTO lab_values 
@@ -1026,17 +1069,17 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
             `, [
               userId,
               recordId,
-              lab.test_name,
-              lab.test_category,
-              lab.value,
-              lab.unit,
-              lab.reference_range,
-              lab.is_abnormal,
-              lab.test_date,
+              measurement.test_name || measurement.measurement_name,
+              measurement.test_category || measurement.measurement_category,
+              measurement.value,
+              measurement.unit,
+              measurement.reference_range,
+              measurement.is_abnormal,
+              measurement.test_date || measurement.measurement_date,
               0.9
             ]);
           } catch (insertError) {
-            console.error('Error inserting lab value:', insertError);
+            console.error('Error inserting measurement:', insertError);
           }
         }
       }
@@ -1478,11 +1521,16 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
     const analysis = result.rows[0];
     
     try {
+      const parsedNumericalData = analysis.numerical_data && analysis.numerical_data.trim() !== '' 
+        ? JSON.parse(analysis.numerical_data) 
+        : { lab_tests: [], medical_measurements: [], graph_data: {} };
+      
       res.json({
         ...analysis,
-        numerical_data: analysis.numerical_data && analysis.numerical_data.trim() !== '' 
-          ? JSON.parse(analysis.numerical_data) 
-          : [],
+        numerical_data: parsedNumericalData,
+        lab_tests: parsedNumericalData.lab_tests || [],
+        medical_measurements: parsedNumericalData.medical_measurements || [],
+        graph_data: parsedNumericalData.graph_data || {},
         trends: analysis.trends && analysis.trends.trim() !== '' 
           ? JSON.parse(analysis.trends) 
           : {},
@@ -1495,7 +1543,10 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
       // Return the analysis with default values if JSON parsing fails
       res.json({
         ...analysis,
-        numerical_data: [],
+        numerical_data: { lab_tests: [], medical_measurements: [], graph_data: {} },
+        lab_tests: [],
+        medical_measurements: [],
+        graph_data: {},
         trends: {},
         recommendations: []
       });
@@ -1523,11 +1574,16 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
     
     const analyses = result.rows.map(row => {
       try {
+        const parsedNumericalData = row.numerical_data && row.numerical_data.trim() !== '' 
+          ? JSON.parse(row.numerical_data) 
+          : { lab_tests: [], medical_measurements: [], graph_data: {} };
+        
         return {
           ...row,
-          numerical_data: row.numerical_data && row.numerical_data.trim() !== '' 
-            ? JSON.parse(row.numerical_data) 
-            : [],
+          numerical_data: parsedNumericalData,
+          lab_tests: parsedNumericalData.lab_tests || [],
+          medical_measurements: parsedNumericalData.medical_measurements || [],
+          graph_data: parsedNumericalData.graph_data || {},
           trends: row.trends && row.trends.trim() !== '' 
             ? JSON.parse(row.trends) 
             : {},
@@ -1540,7 +1596,10 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
         // Return the row with default values if JSON parsing fails
         return {
           ...row,
-          numerical_data: [],
+          numerical_data: { lab_tests: [], medical_measurements: [], graph_data: {} },
+          lab_tests: [],
+          medical_measurements: [],
+          graph_data: {},
           trends: {},
           recommendations: []
         };
