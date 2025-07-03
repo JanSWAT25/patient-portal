@@ -113,6 +113,26 @@ async function initializeDatabase() {
       )
     `);
 
+    // AI Lab Analysis table for comprehensive AI analysis
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ai_lab_analysis (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER,
+        record_id INTEGER,
+        analysis_type TEXT NOT NULL,
+        test_name TEXT,
+        summary TEXT,
+        numerical_data JSONB,
+        trends JSONB,
+        recommendations TEXT,
+        risk_level TEXT,
+        analysis_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        confidence_score REAL DEFAULT 0.8,
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (record_id) REFERENCES pdf_records (id)
+      )
+    `);
+
     // Insert default lab categories
     await pool.query(`
       INSERT INTO lab_categories (category_name, description, color) VALUES 
@@ -488,12 +508,12 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
         `, [req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, pdfAnalysis]);
         const recordId = result.rows[0].id;
 
-        // If it's a lab report, extract lab data
-        if (isLabReport && openai) {
+        // Always perform AI analysis for medical documents
+        if (openai) {
           try {
-            await extractLabDataFromText(extractedText, recordId, req.user.id);
+            await analyzeLabDataWithAI(extractedText, recordId, req.user.id, record_type);
           } catch (error) {
-            console.error('Lab data extraction failed for file:', file.originalname, error);
+            console.error('AI analysis failed for file:', file.originalname, error);
           }
         }
 
@@ -622,12 +642,12 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
         `, [user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, pdfAnalysis]);
         const recordId = result.rows[0].id;
 
-        // If it's a lab report, extract lab data
-        if (isLabReport && openai) {
+        // Always perform AI analysis for medical documents
+        if (openai) {
           try {
-            await extractLabDataFromText(extractedText, recordId, user_id);
+            await analyzeLabDataWithAI(extractedText, recordId, user_id, record_type);
           } catch (error) {
-            console.error('Lab data extraction failed for file:', file.originalname, error);
+            console.error('AI analysis failed for file:', file.originalname, error);
           }
         }
 
@@ -806,50 +826,95 @@ function extractNumericalData(text) {
   return matches;
 }
 
-// AI-powered lab data extraction
-async function extractLabDataFromText(text, recordId, userId) {
+// AI-powered comprehensive lab analysis
+async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
   if (!openai) {
-    console.log('OpenAI not configured - skipping lab data extraction');
-    return [];
+    console.log('OpenAI not configured - skipping AI lab analysis');
+    return null;
   }
 
   try {
+    console.log(`Starting AI analysis for record ${recordId}`);
+    
+    // First, get existing lab data for this user to compare trends
+    const existingDataResult = await pool.query(`
+      SELECT 
+        lv.test_name,
+        lv.value,
+        lv.unit,
+        lv.test_date,
+        lv.is_abnormal,
+        pr.upload_date,
+        pr.record_type
+      FROM lab_values lv
+      LEFT JOIN pdf_records pr ON lv.record_id = pr.id
+      WHERE lv.user_id = $1 AND lv.record_id != $2
+      ORDER BY lv.test_date DESC, pr.upload_date DESC
+      LIMIT 100
+    `, [userId, recordId]);
+
+    const existingData = existingDataResult.rows;
+    const existingDataText = existingData.length > 0 
+      ? `Previous lab data for comparison:\n${JSON.stringify(existingData, null, 2)}`
+      : 'No previous lab data available for comparison.';
+
     const prompt = `
-    You are a medical data extraction specialist. Extract ALL laboratory test results from the following medical document text.
-    
-    IMPORTANT: Extract EVERY lab test with numerical values, including:
-    - Complete Blood Count (CBC): Hemoglobin, Hematocrit, WBC, RBC, Platelets, MCV, MCH, MCHC
-    - Basic Metabolic Panel: Glucose, BUN, Creatinine, Sodium, Potassium, Chloride, CO2, Calcium
-    - Lipid Panel: Total Cholesterol, HDL, LDL, Triglycerides
-    - Liver Function: ALT, AST, Alkaline Phosphatase, Bilirubin, Albumin
-    - Thyroid: TSH, T3, T4, Free T3, Free T4
-    - Diabetes: HbA1c, Fasting Glucose
-    - Kidney Function: Creatinine, BUN, eGFR
-    - Any other numerical lab values found
-    
-    Return ONLY a JSON array of objects with this exact structure:
-    [
-      {
-        "test_name": "Exact test name as written (e.g., Hemoglobin, Glucose, Total Cholesterol)",
-        "test_category": "Category (Hematology, Chemistry, Lipids, Thyroid, Diabetes, Liver, Kidney, Other)",
-        "value": numeric_value,
-        "unit": "unit (mg/dL, mmol/L, g/dL, %, etc.)",
-        "reference_range": "normal range (e.g., 12.0-15.5 g/dL or 135-145 mEq/L)",
-        "is_abnormal": boolean,
-        "test_date": "YYYY-MM-DD if found in document, otherwise null"
-      }
-    ]
-    
-    Rules:
-    1. Extract ALL numerical lab values, even if they appear normal
-    2. Use exact test names as written in the document
-    3. Include reference ranges if provided
-    4. Mark as abnormal if value is outside reference range or marked as high/low
-    5. If no lab data is found, return an empty array
-    6. Be thorough - don't miss any lab values
-    
-    Text to analyze:
-    ${text.substring(0, 12000)} // Increased text length for better extraction
+    You are an advanced medical AI analyst. Analyze the following medical document and provide comprehensive insights.
+
+    DOCUMENT TO ANALYZE:
+    ${text.substring(0, 15000)}
+
+    PREVIOUS LAB DATA FOR TREND ANALYSIS:
+    ${existingDataText}
+
+    DOCUMENT TYPE: ${recordType || 'Unknown'}
+
+    Please provide a comprehensive analysis in the following JSON format:
+
+    {
+      "document_summary": "Brief summary of what this document contains",
+      "lab_tests_found": [
+        {
+          "test_name": "Exact test name",
+          "test_category": "Category (Hematology, Chemistry, Lipids, Thyroid, Diabetes, Liver, Kidney, Other)",
+          "value": numeric_value_or_null,
+          "unit": "unit if available",
+          "reference_range": "normal range if available",
+          "is_abnormal": boolean,
+          "test_date": "YYYY-MM-DD if found",
+          "interpretation": "What this value means",
+          "trend": "improving/declining/stable/unknown compared to previous data"
+        }
+      ],
+      "key_findings": [
+        "List of important findings from the document"
+      ],
+      "risk_assessment": {
+        "overall_risk": "low/medium/high",
+        "risk_factors": ["List of risk factors identified"],
+        "recommendations": ["List of recommendations based on findings"]
+      },
+      "trend_analysis": {
+        "improving_tests": ["Tests showing improvement"],
+        "declining_tests": ["Tests showing decline"],
+        "stable_tests": ["Tests remaining stable"],
+        "new_abnormalities": ["New abnormal findings"]
+      },
+      "comparison_insights": "Analysis of how current results compare to previous data",
+      "action_items": ["Specific actions the patient should consider"]
+    }
+
+    IMPORTANT GUIDELINES:
+    1. If the document contains lab results, extract ALL numerical values
+    2. If the document is not primarily lab results, provide a comprehensive medical summary
+    3. Compare current findings with previous data when available
+    4. Identify trends, improvements, or concerning changes
+    5. Provide actionable recommendations
+    6. Assess overall health risk level
+    7. Be thorough but concise in analysis
+    8. If no lab data is found, focus on medical insights and recommendations
+
+    Return ONLY valid JSON - no additional text.
     `;
 
     const completion = await openai.chat.completions.create({
@@ -857,7 +922,7 @@ async function extractLabDataFromText(text, recordId, userId) {
       messages: [
         {
           role: "system",
-          content: "You are a medical data extraction specialist. Extract only laboratory test results with numerical values and return them in the specified JSON format."
+          content: "You are an advanced medical AI analyst. Provide comprehensive medical analysis in JSON format."
         },
         {
           role: "user",
@@ -865,50 +930,77 @@ async function extractLabDataFromText(text, recordId, userId) {
         }
       ],
       temperature: 0.1,
-      max_tokens: 2000
+      max_tokens: 3000
     });
 
-    const response = completion.data.choices[0].message.content;
-    const labData = JSON.parse(response);
+    const response = completion.choices[0].message.content;
+    const analysis = JSON.parse(response);
 
-    // Store extracted data in database
-    if (Array.isArray(labData) && labData.length > 0) {
-      console.log(`Extracting ${labData.length} lab values for record ${recordId}`);
+    console.log(`AI analysis completed for record ${recordId}`);
+
+    // Store the comprehensive analysis
+    await pool.query(`
+      INSERT INTO ai_lab_analysis 
+      (user_id, record_id, analysis_type, test_name, summary, numerical_data, trends, recommendations, risk_level, confidence_score)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `, [
+      userId,
+      recordId,
+      'comprehensive',
+      'all_tests',
+      analysis.document_summary,
+      JSON.stringify(analysis.lab_tests_found),
+      JSON.stringify(analysis.trend_analysis),
+      JSON.stringify(analysis.recommendations),
+      analysis.risk_assessment?.overall_risk || 'unknown',
+      0.9
+    ]);
+
+    // Extract and store individual lab values if found
+    if (analysis.lab_tests_found && analysis.lab_tests_found.length > 0) {
+      console.log(`Extracting ${analysis.lab_tests_found.length} lab values from AI analysis`);
       
-      for (const lab of labData) {
-        try {
-          await pool.query(`
-            INSERT INTO lab_values 
-            (user_id, record_id, test_name, test_category, value, unit, reference_range, is_abnormal, test_date, confidence_score)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          `, [
-            userId,
-            recordId,
-            lab.test_name,
-            lab.test_category,
-            lab.value,
-            lab.unit,
-            lab.reference_range,
-            lab.is_abnormal,
-            lab.test_date,
-            0.9 // High confidence for AI extraction
-          ]);
-        } catch (insertError) {
-          console.error('Error inserting lab value:', insertError);
+      for (const lab of analysis.lab_tests_found) {
+        if (lab.value !== null && lab.value !== undefined) {
+          try {
+            await pool.query(`
+              INSERT INTO lab_values 
+              (user_id, record_id, test_name, test_category, value, unit, reference_range, is_abnormal, test_date, confidence_score)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            `, [
+              userId,
+              recordId,
+              lab.test_name,
+              lab.test_category,
+              lab.value,
+              lab.unit,
+              lab.reference_range,
+              lab.is_abnormal,
+              lab.test_date,
+              0.9
+            ]);
+          } catch (insertError) {
+            console.error('Error inserting lab value:', insertError);
+          }
         }
       }
     }
 
-    // Mark record as lab data extracted
+    // Mark record as analyzed
     await pool.query(`
       UPDATE pdf_records SET lab_data_extracted = TRUE WHERE id = $1
     `, [recordId]);
 
-    return labData;
+    return analysis;
   } catch (error) {
-    console.error('Error extracting lab data:', error);
-    return [];
+    console.error('Error in AI lab analysis:', error);
+    return null;
   }
+}
+
+// Legacy function for backward compatibility
+async function extractLabDataFromText(text, recordId, userId) {
+  return await analyzeLabDataWithAI(text, recordId, userId);
 }
 
 // Detect if PDF is a lab report
@@ -1210,7 +1302,7 @@ app.get('/api/lab-values/test-names', authenticateToken, async (req, res) => {
   }
 });
 
-// Re-extract lab data from existing record
+// Re-analyze document with AI
 app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res) => {
   try {
     // Get the record
@@ -1223,23 +1315,84 @@ app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res
       return res.status(404).json({ error: 'Record not found' });
     }
 
-    // Delete existing lab values for this record
+    // Delete existing lab values and AI analysis for this record
     await pool.query(`
       DELETE FROM lab_values WHERE record_id = $1
     `, [req.params.recordId]);
+    
+    await pool.query(`
+      DELETE FROM ai_lab_analysis WHERE record_id = $1
+    `, [req.params.recordId]);
 
-    // Re-extract lab data
+    // Re-analyze with AI
     if (openai) {
-      const labData = await extractLabDataFromText(record.extracted_data, req.params.recordId, req.user.id);
+      const analysis = await analyzeLabDataWithAI(record.extracted_data, req.params.recordId, req.user.id, record.record_type);
       res.json({ 
-        message: 'Lab data re-extracted successfully',
-        extracted_tests: labData.length
+        message: 'Document re-analyzed successfully',
+        extracted_tests: analysis?.lab_tests_found?.length || 0,
+        summary: analysis?.document_summary
       });
     } else {
       res.status(400).json({ error: 'OpenAI API key not configured' });
     }
   } catch (error) {
-    console.error('Error re-extracting lab data:', error);
+    console.error('Error re-analyzing document:', error);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get AI analysis for a specific record
+app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM ai_lab_analysis 
+      WHERE record_id = $1 AND user_id = $2
+      ORDER BY analysis_date DESC
+      LIMIT 1
+    `, [req.params.recordId, req.user.id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'AI analysis not found' });
+    }
+    
+    const analysis = result.rows[0];
+    res.json({
+      ...analysis,
+      numerical_data: analysis.numerical_data ? JSON.parse(analysis.numerical_data) : [],
+      trends: analysis.trends ? JSON.parse(analysis.trends) : {},
+      recommendations: analysis.recommendations ? JSON.parse(analysis.recommendations) : []
+    });
+  } catch (error) {
+    console.error('Error fetching AI analysis:', error);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get all AI analysis for user
+app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        ala.*,
+        pr.original_name as record_name,
+        pr.record_type,
+        pr.upload_date
+      FROM ai_lab_analysis ala
+      LEFT JOIN pdf_records pr ON ala.record_id = pr.id
+      WHERE ala.user_id = $1
+      ORDER BY ala.analysis_date DESC
+    `, [req.user.id]);
+    
+    const analyses = result.rows.map(row => ({
+      ...row,
+      numerical_data: row.numerical_data ? JSON.parse(row.numerical_data) : [],
+      trends: row.trends ? JSON.parse(row.trends) : {},
+      recommendations: row.recommendations ? JSON.parse(row.recommendations) : []
+    }));
+    
+    res.json(analyses);
+  } catch (error) {
+    console.error('Error fetching AI analyses:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });

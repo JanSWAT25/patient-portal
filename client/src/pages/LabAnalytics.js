@@ -12,122 +12,110 @@ import {
   LineChart,
   Target,
   TrendingDown,
-  Minus
+  Minus,
+  Brain,
+  FileText,
+  Heart,
+  Shield,
+  Lightbulb,
+  ArrowUp,
+  ArrowDown,
+  ArrowRight
 } from 'lucide-react';
 import axios from 'axios';
 
 const LabAnalytics = () => {
   const { user } = useAuth();
+  const [aiAnalyses, setAiAnalyses] = useState([]);
   const [labValues, setLabValues] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [selectedTest, setSelectedTest] = useState('');
+  const [selectedAnalysis, setSelectedAnalysis] = useState(null);
   const [viewMode, setViewMode] = useState('overview');
-  const [extracting, setExtracting] = useState(false);
-  const [trendData, setTrendData] = useState([]);
+  const [reanalyzing, setReanalyzing] = useState(false);
   const [analyticsSummary, setAnalyticsSummary] = useState(null);
   const [availableTests, setAvailableTests] = useState([]);
-  const [groupedTrends, setGroupedTrends] = useState({});
-  const [selectedTrendTest, setSelectedTrendTest] = useState('');
+  const [selectedTest, setSelectedTest] = useState('');
 
   useEffect(() => {
-    fetchLabData();
-    fetchGroupedTrends();
+    fetchData();
   }, []);
 
   useEffect(() => {
-    if (selectedTrendTest) {
-      fetchTrendData(selectedTrendTest);
+    if (selectedTest) {
+      fetchTrendData(selectedTest);
     }
-  }, [selectedTrendTest]);
+  }, [selectedTest]);
 
-  const fetchLabData = async () => {
+  const fetchData = async () => {
     try {
-      const [labResponse, categoriesResponse, summaryResponse, testsResponse] = await Promise.all([
+      const [aiResponse, labResponse, summaryResponse, testsResponse] = await Promise.all([
+        axios.get('/api/ai-analysis'),
         axios.get('/api/lab-values'),
-        axios.get('/api/lab-categories'),
         axios.get('/api/lab-analytics/summary'),
         axios.get('/api/lab-values/test-names')
       ]);
       
+      setAiAnalyses(aiResponse.data);
       setLabValues(labResponse.data);
-      setCategories(categoriesResponse.data);
       setAnalyticsSummary(summaryResponse.data);
       setAvailableTests(testsResponse.data);
     } catch (error) {
-      console.error('Error fetching lab data:', error);
+      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchGroupedTrends = async () => {
-    try {
-      const response = await axios.get('/api/lab-values/grouped-trends');
-      setGroupedTrends(response.data);
-    } catch (error) {
-      console.error('Error fetching grouped trends:', error);
-    }
-  };
-
-  const reExtractLabData = async (recordId) => {
-    setExtracting(true);
+  const reAnalyzeDocument = async (recordId) => {
+    setReanalyzing(true);
     try {
       await axios.post(`/api/lab-values/extract/${recordId}`);
-      await fetchLabData();
-      alert('Lab data re-extracted successfully!');
+      await fetchData();
+      alert('Document re-analyzed successfully!');
     } catch (error) {
-      console.error('Error re-extracting lab data:', error);
-      alert('Failed to re-extract lab data');
+      console.error('Error re-analyzing document:', error);
+      alert('Failed to re-analyze document');
     } finally {
-      setExtracting(false);
+      setReanalyzing(false);
     }
   };
 
   const fetchTrendData = async (testName) => {
     try {
       const response = await axios.get(`/api/lab-values/trends/${testName}`);
-      setTrendData(response.data);
+      return response.data;
     } catch (error) {
       console.error('Error fetching trend data:', error);
+      return [];
     }
   };
 
-  const filteredLabValues = labValues.filter(lab => {
-    const matchesCategory = selectedCategory === 'all' || lab.test_category === selectedCategory;
-    const matchesTest = !selectedTest || lab.test_name.toLowerCase().includes(selectedTest.toLowerCase());
-    return matchesCategory && matchesTest;
-  });
-
-  const testNames = [...new Set(labValues.map(lab => lab.test_name))].sort();
-
-  const getCategoryStats = () => {
-    const stats = {};
-    labValues.forEach(lab => {
-      if (!stats[lab.test_category]) {
-        stats[lab.test_category] = {
-          count: 0,
-          abnormal: 0,
-          normal: 0
-        };
-      }
-      stats[lab.test_category].count++;
-      if (lab.is_abnormal) {
-        stats[lab.test_category].abnormal++;
-      } else {
-        stats[lab.test_category].normal++;
-      }
-    });
-    return stats;
+  const getRiskLevelColor = (riskLevel) => {
+    switch (riskLevel?.toLowerCase()) {
+      case 'high': return 'text-red-600 bg-red-50 border-red-200';
+      case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+      case 'low': return 'text-green-600 bg-green-50 border-green-200';
+      default: return 'text-gray-600 bg-gray-50 border-gray-200';
+    }
   };
 
-  const categoryStats = getCategoryStats();
+  const getRiskLevelIcon = (riskLevel) => {
+    switch (riskLevel?.toLowerCase()) {
+      case 'high': return <AlertTriangle className="h-5 w-5 text-red-500" />;
+      case 'medium': return <Shield className="h-5 w-5 text-yellow-500" />;
+      case 'low': return <CheckCircle className="h-5 w-5 text-green-500" />;
+      default: return <Minus className="h-5 w-5 text-gray-500" />;
+    }
+  };
 
-  const recentAbnormal = labValues
-    .filter(lab => lab.is_abnormal)
-    .sort((a, b) => new Date(b.test_date || b.upload_date) - new Date(a.test_date || a.upload_date))
-    .slice(0, 5);
+  const getTrendIcon = (trend) => {
+    switch (trend?.toLowerCase()) {
+      case 'improving': return <ArrowUp className="h-4 w-4 text-green-500" />;
+      case 'declining': return <ArrowDown className="h-4 w-4 text-red-500" />;
+      case 'stable': return <ArrowRight className="h-4 w-4 text-blue-500" />;
+      default: return <Minus className="h-4 w-4 text-gray-500" />;
+    }
+  };
 
   const StatCard = ({ title, value, icon: Icon, color, subtitle, trend }) => (
     <div className={`bg-white p-6 rounded-lg shadow-md border-l-4 ${color}`}>
@@ -138,15 +126,9 @@ const LabAnalytics = () => {
           {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
           {trend && (
             <div className="flex items-center mt-2">
-              {trend > 0 ? (
-                <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
-              ) : trend < 0 ? (
-                <TrendingDown className="h-4 w-4 text-red-500 mr-1" />
-              ) : (
-                <Minus className="h-4 w-4 text-gray-500 mr-1" />
-              )}
-              <span className={`text-sm ${trend > 0 ? 'text-green-600' : trend < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                {Math.abs(trend)}% from last month
+              {getTrendIcon(trend)}
+              <span className="text-sm text-gray-600 ml-1">
+                {trend} trend
               </span>
             </div>
           )}
@@ -156,8 +138,150 @@ const LabAnalytics = () => {
     </div>
   );
 
-  // Enhanced trend chart with reference ranges
-  const EnhancedTrendChart = ({ data, testName }) => {
+  const AIAnalysisCard = ({ analysis }) => {
+    const numericalData = analysis.numerical_data || [];
+    const trends = analysis.trends || {};
+    const recommendations = analysis.recommendations || [];
+
+    return (
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <Brain className="h-6 w-6 text-medical-600 mr-3" />
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">{analysis.record_name}</h3>
+              <p className="text-sm text-gray-600">{analysis.record_type} • {new Date(analysis.analysis_date).toLocaleDateString()}</p>
+            </div>
+          </div>
+          <div className={`px-3 py-1 rounded-full border ${getRiskLevelColor(analysis.risk_level)}`}>
+            <div className="flex items-center">
+              {getRiskLevelIcon(analysis.risk_level)}
+              <span className="ml-1 text-sm font-medium capitalize">{analysis.risk_level || 'Unknown'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Document Summary */}
+        {analysis.summary && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-gray-900 mb-2 flex items-center">
+              <FileText className="h-4 w-4 mr-2" />
+              Document Summary
+            </h4>
+            <p className="text-gray-700 bg-gray-50 p-3 rounded-lg">{analysis.summary}</p>
+          </div>
+        )}
+
+        {/* Lab Tests Found */}
+        {numericalData.length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center">
+              <BarChart3 className="h-4 w-4 mr-2" />
+              Lab Tests ({numericalData.length})
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {numericalData.map((test, index) => (
+                <div key={index} className={`p-3 rounded-lg border ${test.is_abnormal ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-sm text-gray-900">{test.test_name}</p>
+                      <p className="text-sm text-gray-600">{test.test_category}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-bold text-sm ${test.is_abnormal ? 'text-red-600' : 'text-green-600'}`}>
+                        {test.value} {test.unit}
+                      </p>
+                      {test.reference_range && (
+                        <p className="text-xs text-gray-500">Ref: {test.reference_range}</p>
+                      )}
+                    </div>
+                  </div>
+                  {test.trend && (
+                    <div className="flex items-center mt-2">
+                      {getTrendIcon(test.trend)}
+                      <span className="text-xs text-gray-600 ml-1 capitalize">{test.trend}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Trend Analysis */}
+        {Object.keys(trends).length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center">
+              <TrendingUp className="h-4 w-4 mr-2" />
+              Trend Analysis
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {trends.improving_tests && trends.improving_tests.length > 0 && (
+                <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                  <h5 className="font-medium text-green-800 mb-2 flex items-center">
+                    <ArrowUp className="h-4 w-4 mr-1" />
+                    Improving Tests
+                  </h5>
+                  <ul className="text-sm text-green-700">
+                    {trends.improving_tests.map((test, index) => (
+                      <li key={index}>• {test}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {trends.declining_tests && trends.declining_tests.length > 0 && (
+                <div className="bg-red-50 p-3 rounded-lg border border-red-200">
+                  <h5 className="font-medium text-red-800 mb-2 flex items-center">
+                    <ArrowDown className="h-4 w-4 mr-1" />
+                    Declining Tests
+                  </h5>
+                  <ul className="text-sm text-red-700">
+                    {trends.declining_tests.map((test, index) => (
+                      <li key={index}>• {test}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Recommendations */}
+        {recommendations.length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center">
+              <Lightbulb className="h-4 w-4 mr-2" />
+              Recommendations
+            </h4>
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <ul className="space-y-2">
+                {recommendations.map((rec, index) => (
+                  <li key={index} className="flex items-start">
+                    <span className="text-blue-600 mr-2">•</span>
+                    <span className="text-sm text-blue-800">{rec}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {/* Action Button */}
+        <div className="flex justify-end">
+          <button
+            onClick={() => reAnalyzeDocument(analysis.record_id)}
+            disabled={reanalyzing}
+            className="flex items-center px-4 py-2 bg-medical-600 text-white rounded-lg hover:bg-medical-700 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${reanalyzing ? 'animate-spin' : ''}`} />
+            {reanalyzing ? 'Re-analyzing...' : 'Re-analyze'}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const SimpleTrendChart = ({ data, testName }) => {
     if (!data || data.length === 0) {
       return (
         <div className="text-center py-8 text-gray-500">
@@ -167,204 +291,30 @@ const LabAnalytics = () => {
     }
 
     const sortedData = data.sort((a, b) => new Date(a.test_date || a.extraction_date) - new Date(b.test_date || b.extraction_date));
-    
-    // Calculate reference range if available
-    const referenceRanges = sortedData
-      .map(d => d.reference_range)
-      .filter(Boolean)
-      .map(range => {
-        const match = range.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)/);
-        return match ? { min: parseFloat(match[1]), max: parseFloat(match[2]) } : null;
-      })
-      .filter(Boolean);
-    
-    const avgReference = referenceRanges.length > 0 ? {
-      min: referenceRanges.reduce((sum, r) => sum + r.min, 0) / referenceRanges.length,
-      max: referenceRanges.reduce((sum, r) => sum + r.max, 0) / referenceRanges.length
-    } : null;
-
     const values = sortedData.map(d => Number(d.value));
     const min = Math.min(...values);
     const max = Math.max(...values);
     const range = max - min;
 
     return (
-      <div className="bg-white rounded-lg shadow-md p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-          <TrendingUp className="h-5 w-5 mr-2 text-medical-600" />
-          {testName} Trend
-        </h3>
-        
-        {/* Chart */}
-        <div className="mb-6">
-          <svg width="100%" height="200" className="border-b border-gray-200">
-            {/* Reference range zone */}
-            {avgReference && (
-              <rect
-                x="0"
-                y={200 - ((avgReference.max - min) / range) * 180}
-                width="100%"
-                height={((avgReference.max - avgReference.min) / range) * 180}
-                fill="#f0f9ff"
-                opacity="0.5"
-              />
-            )}
-            
-            {/* Trend line */}
-            <polyline
-              fill="none"
-              stroke="#0ea5e9"
-              strokeWidth="3"
-              points={sortedData.map((d, i) => {
-                const x = (i / (sortedData.length - 1)) * 95 + 2.5;
-                const y = 190 - ((Number(d.value) - min) / range) * 180;
-                return `${x},${y}`;
-              }).join(' ')}
-            />
-            
-            {/* Data points */}
-            {sortedData.map((d, i) => {
-              const x = (i / (sortedData.length - 1)) * 95 + 2.5;
-              const y = 190 - ((Number(d.value) - min) / range) * 180;
-              return (
-                <circle
-                  key={i}
-                  cx={x}
-                  cy={y}
-                  r="4"
-                  fill={d.is_abnormal ? "#ef4444" : "#10b981"}
-                  stroke="white"
-                  strokeWidth="2"
+      <div className="bg-white rounded-lg shadow-md p-4">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">{testName} Trend</h3>
+        <div className="flex items-end justify-between h-32 space-x-1">
+          {sortedData.map((point, index) => {
+            const height = range > 0 ? ((point.value - min) / range) * 100 : 50;
+            return (
+              <div key={index} className="flex-1 flex flex-col items-center">
+                <div 
+                  className={`w-full rounded-t ${point.is_abnormal ? 'bg-red-500' : 'bg-medical-500'}`}
+                  style={{ height: `${height}%` }}
                 />
-              );
-            })}
-            
-            {/* Y-axis labels */}
-            <text x="0" y="195" fontSize="10" fill="#888">{min}</text>
-            <text x="0" y="15" fontSize="10" fill="#888">{max}</text>
-            {avgReference && (
-              <>
-                <text x="0" y={200 - ((avgReference.max - min) / range) * 180 + 10} fontSize="10" fill="#0ea5e9">
-                  {avgReference.max}
-                </text>
-                <text x="0" y={200 - ((avgReference.min - min) / range) * 180 + 10} fontSize="10" fill="#0ea5e9">
-                  {avgReference.min}
-                </text>
-              </>
-            )}
-          </svg>
-          
-          {/* Reference range info */}
-          {avgReference && (
-            <div className="text-center mt-2">
-              <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                Normal Range: {avgReference.min.toFixed(1)} - {avgReference.max.toFixed(1)} {data[0]?.unit}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Data table */}
-        <div className="space-y-3">
-          {sortedData.map((item, index) => (
-            <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-              <div className="flex items-center space-x-4">
-                <div className={`w-3 h-3 rounded-full ${item.is_abnormal ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                <div>
-                  <p className="font-medium text-gray-900">{item.value} {item.unit}</p>
-                  <p className="text-sm text-gray-500">
-                    {new Date(item.test_date || item.extraction_date).toLocaleDateString()}
-                  </p>
+                <div className="text-xs text-gray-500 mt-1 text-center">
+                  {point.value}
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-sm text-gray-600">{item.record_name}</p>
-                {item.reference_range && (
-                  <p className="text-xs text-gray-500">Ref: {item.reference_range}</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  // Simple SVG line chart for trends
-  const SimpleLineChart = ({ data, testName }) => {
-    if (!data || data.length < 2) return <div className="text-gray-500">Not enough data for a trend graph.</div>;
-    
-    // Sort by date
-    const sorted = [...data].sort((a, b) => new Date(a.test_date || a.upload_date) - new Date(b.test_date || b.upload_date));
-    const values = sorted.map(d => Number(d.value));
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min;
-    
-    const points = values.map((v, i) => {
-      const x = (i / (values.length - 1)) * 180 + 10;
-      const y = 90 - ((v - min) / range) * 70;
-      return `${x},${y}`;
-    }).join(' ');
-    
-    return (
-      <div className="relative">
-        <svg width="200" height="100" className="my-2">
-          {/* Reference range if available */}
-          {sorted[0]?.reference_range && (() => {
-            const rangeMatch = sorted[0].reference_range.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)/);
-            if (rangeMatch) {
-              const refMin = parseFloat(rangeMatch[1]);
-              const refMax = parseFloat(rangeMatch[2]);
-              const y1 = 90 - ((refMin - min) / range) * 70;
-              const y2 = 90 - ((refMax - min) / range) * 70;
-              return (
-                <rect
-                  x="0"
-                  y={Math.min(y1, y2)}
-                  width="200"
-                  height={Math.abs(y2 - y1)}
-                  fill="#f0f9ff"
-                  opacity="0.5"
-                />
-              );
-            }
-            return null;
-          })()}
-          
-          <polyline
-            fill="none"
-            stroke="#0ea5e9"
-            strokeWidth="2"
-            points={points}
-          />
-          
-          {/* Dots */}
-          {values.map((v, i) => {
-            const x = (i / (values.length - 1)) * 180 + 10;
-            const y = 90 - ((v - min) / range) * 70;
-            return (
-              <circle 
-                key={i} 
-                cx={x} 
-                cy={y} 
-                r="3" 
-                fill={sorted[i].is_abnormal ? "#ef4444" : "#10b981"} 
-              />
             );
           })}
-          
-          {/* Min/Max labels */}
-          <text x="0" y="95" fontSize="10" fill="#888">{min}</text>
-          <text x="170" y="95" fontSize="10" fill="#888" textAnchor="end">{max}</text>
-        </svg>
-        
-        {/* Reference range label */}
-        {sorted[0]?.reference_range && (
-          <div className="text-xs text-blue-600 text-center mt-1">
-            Normal: {sorted[0].reference_range}
-          </div>
-        )}
+        </div>
       </div>
     );
   };
@@ -379,360 +329,173 @@ const LabAnalytics = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Lab Analytics</h1>
+        <h1 className="text-3xl font-bold text-gray-900 flex items-center">
+          <Brain className="h-8 w-8 mr-3 text-medical-600" />
+          AI-Powered Lab Analytics
+        </h1>
         <p className="mt-2 text-gray-600">
-          Track your laboratory values over time and monitor trends with AI-powered insights
+          Comprehensive analysis of your medical documents with AI insights, trends, and recommendations.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      {/* Stats Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard
-          title="Total Tests"
-          value={labValues.length}
-          icon={Activity}
+          title="Documents Analyzed"
+          value={aiAnalyses.length}
+          icon={FileText}
           color="border-blue-500"
+        />
+        <StatCard
+          title="Lab Tests Found"
+          value={labValues.length}
+          icon={BarChart3}
+          color="border-green-500"
         />
         <StatCard
           title="Abnormal Results"
           value={labValues.filter(lab => lab.is_abnormal).length}
           icon={AlertTriangle}
           color="border-red-500"
-          subtitle={`${((labValues.filter(lab => lab.is_abnormal).length / labValues.length) * 100).toFixed(1)}% of total`}
         />
         <StatCard
-          title="Test Categories"
-          value={Object.keys(categoryStats).length}
-          icon={Filter}
-          color="border-green-500"
-        />
-        <StatCard
-          title="Recent Tests"
-          value={labValues.filter(lab => {
-            const testDate = new Date(lab.test_date || lab.upload_date);
-            const weekAgo = new Date();
-            weekAgo.setDate(weekAgo.getDate() - 7);
-            return testDate > weekAgo;
-          }).length}
-          icon={Clock}
+          title="AI Insights"
+          value={aiAnalyses.filter(a => a.summary).length}
+          icon={Brain}
           color="border-purple-500"
-          subtitle="Last 7 days"
         />
       </div>
 
-      <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex space-x-2">
+      {/* View Mode Toggle */}
+      <div className="bg-white rounded-lg shadow-md p-4 mb-8">
+        <div className="flex items-center justify-between">
+          <div className="flex space-x-4">
             <button
               onClick={() => setViewMode('overview')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors duration-200 ${
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 viewMode === 'overview' 
-                  ? 'bg-medical-100 text-medical-700 border border-medical-200' 
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  ? 'bg-medical-600 text-white' 
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
-              <Activity className="h-4 w-4 inline mr-2" />
-              Overview
-            </button>
-            <button
-              onClick={() => setViewMode('categories')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors duration-200 ${
-                viewMode === 'categories' 
-                  ? 'bg-medical-100 text-medical-700 border border-medical-200' 
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-              }`}
-            >
-              <Filter className="h-4 w-4 inline mr-2" />
-              Categories
+              AI Analysis Overview
             </button>
             <button
               onClick={() => setViewMode('trends')}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors duration-200 ${
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 viewMode === 'trends' 
-                  ? 'bg-medical-100 text-medical-700 border border-medical-200' 
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  ? 'bg-medical-600 text-white' 
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
             >
-              <LineChart className="h-4 w-4 inline mr-2" />
-              Trends
+              Lab Trends
             </button>
           </div>
-
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500"
-          >
-            <option value="all">All Categories</option>
-            {categories.map(category => (
-              <option key={category.category_name} value={category.category_name}>
-                {category.category_name}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={selectedTest}
-            onChange={(e) => setSelectedTest(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500"
-          >
-            <option value="">All Tests</option>
-            {testNames.map(testName => (
-              <option key={testName} value={testName}>
-                {testName}
-              </option>
-            ))}
-          </select>
-
           <button
-            onClick={fetchLabData}
-            disabled={extracting}
-            className="flex items-center px-4 py-2 bg-medical-600 text-white rounded-md hover:bg-medical-700 disabled:opacity-50 transition-colors duration-200"
+            onClick={fetchData}
+            className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${extracting ? 'animate-spin' : ''}`} />
-            {extracting ? 'Extracting...' : 'Refresh'}
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
           </button>
         </div>
       </div>
 
-      {viewMode === 'overview' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">
-              Test Distribution by Category
-            </h3>
-            <div className="space-y-4">
-              {Object.entries(categoryStats).map(([category, stats]) => (
-                <div key={category} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div>
-                    <p className="font-medium text-gray-900">{category}</p>
-                    <p className="text-sm text-gray-600">{stats.count} tests</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm text-gray-600">
-                      {stats.abnormal} abnormal, {stats.normal} normal
-                    </p>
-                    <div className="w-24 bg-gray-200 rounded-full h-2 mt-1">
-                      <div 
-                        className="bg-medical-600 h-2 rounded-full" 
-                        style={{ width: `${(stats.count / labValues.length) * 100}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                </div>
+      {/* Content */}
+      {viewMode === 'overview' ? (
+        <div>
+          {aiAnalyses.length === 0 ? (
+            <div className="text-center py-12">
+              <Brain className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No AI Analysis Available</h3>
+              <p className="text-gray-600 mb-4">
+                Upload medical documents to get AI-powered insights and analysis.
+              </p>
+            </div>
+          ) : (
+            <div>
+              {aiAnalyses.map((analysis) => (
+                <AIAnalysisCard key={analysis.id} analysis={analysis} />
               ))}
             </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">
-              Recent Abnormal Results
-            </h3>
-            {recentAbnormal.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">No abnormal results found</p>
-            ) : (
-              <div className="space-y-3">
-                {recentAbnormal.map((lab, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
-                    <div>
-                      <p className="font-medium text-gray-900">{lab.test_name}</p>
-                      <p className="text-sm text-gray-600">
-                        {lab.value} {lab.unit} • {new Date(lab.test_date || lab.upload_date).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <AlertTriangle className="h-5 w-5 text-red-500" />
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
         </div>
-      )}
-
-      {viewMode === 'categories' && (
-        <div className="space-y-6">
-          {categories.map(category => {
-            const categoryData = labValues.filter(lab => lab.test_category === category.category_name);
-            if (categoryData.length === 0) return null;
-
-            return (
-              <div key={category.category_name} className="bg-white rounded-lg shadow-md p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xl font-semibold text-gray-900">
-                    {category.category_name}
-                  </h3>
-                  <span className="text-sm text-gray-500">
-                    {categoryData.length} tests
-                  </span>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {categoryData.slice(0, 6).map((lab, index) => (
-                    <div key={index} className="p-4 border border-gray-200 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-medium text-gray-900">{lab.test_name}</h4>
-                        {lab.is_abnormal ? (
-                          <AlertTriangle className="h-4 w-4 text-red-500" />
-                        ) : (
-                          <CheckCircle className="h-4 w-4 text-green-500" />
-                        )}
-                      </div>
-                      <p className="text-lg font-bold text-gray-900">
-                        {lab.value} {lab.unit}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {lab.reference_range && `Normal: ${lab.reference_range}`}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {new Date(lab.test_date || lab.upload_date).toLocaleDateString()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                
-                {categoryData.length > 6 && (
-                  <p className="text-sm text-gray-500 mt-4 text-center">
-                    +{categoryData.length - 6} more tests
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {viewMode === 'trends' && (
-        <div className="space-y-8">
-          {/* Test selector for detailed trend view */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Select Test for Detailed Trend</h3>
+      ) : (
+        <div>
+          {/* Test Selection */}
+          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Select Test for Trend Analysis</h3>
             <select
-              value={selectedTrendTest}
-              onChange={(e) => setSelectedTrendTest(e.target.value)}
-              className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500 w-full md:w-64"
+              value={selectedTest}
+              onChange={(e) => setSelectedTest(e.target.value)}
+              className="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-medical-500 focus:border-transparent"
             >
               <option value="">Choose a test...</option>
-              {testNames.map(testName => (
-                <option key={testName} value={testName}>
-                  {testName}
+              {availableTests.map((test) => (
+                <option key={test.test_name} value={test.test_name}>
+                  {test.test_name} ({test.count} values)
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Detailed trend chart */}
-          {selectedTrendTest && (
-            <EnhancedTrendChart data={trendData} testName={selectedTrendTest} />
+          {/* Trend Chart */}
+          {selectedTest && (
+            <div className="mb-8">
+              <SimpleTrendChart data={labValues.filter(lab => lab.test_name === selectedTest)} testName={selectedTest} />
+            </div>
           )}
 
-          {/* Grouped trends overview */}
-          <div className="space-y-6">
-            <h3 className="text-xl font-semibold text-gray-900">All Test Trends</h3>
-            {Object.keys(groupedTrends).length === 0 && (
-              <div className="text-gray-500">No lab trend data available.</div>
-            )}
-            {Object.entries(groupedTrends).map(([recordType, tests]) => (
-              <div key={recordType} className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <LineChart className="h-5 w-5 mr-2 text-medical-600" />
-                  {recordType || 'Unknown Record Type'}
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {Object.entries(tests).map(([testName, data]) => (
-                    <div key={testName} className="p-4 border border-gray-200 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-medium text-gray-900">{testName}</h4>
-                        <span className="text-xs text-gray-500">{data.length} pts</span>
-                      </div>
-                      <SimpleLineChart data={data} testName={testName} />
-                      <div className="text-xs text-gray-500 mt-2">
-                        {data[data.length-1]?.unit}
-                      </div>
-                    </div>
+          {/* All Lab Values Table */}
+          <div className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">All Lab Values</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Test</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Value</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {labValues.map((lab) => (
+                    <tr key={lab.id}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {lab.test_name}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {lab.value} {lab.unit}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {lab.test_category}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          lab.is_abnormal 
+                            ? 'bg-red-100 text-red-800' 
+                            : 'bg-green-100 text-green-800'
+                        }`}>
+                          {lab.is_abnormal ? 'Abnormal' : 'Normal'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {lab.test_date ? new Date(lab.test_date).toLocaleDateString() : 'Unknown'}
+                      </td>
+                    </tr>
                   ))}
-                </div>
-              </div>
-            ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
-
-      <div className="bg-white rounded-lg shadow-md p-6 mt-8">
-        <h3 className="text-xl font-semibold text-gray-900 mb-4">All Lab Values</h3>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Test
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Category
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Value
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Reference
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredLabValues.map((lab, index) => (
-                <tr key={index} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {lab.test_name}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {lab.test_category}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {lab.value} {lab.unit}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {lab.reference_range || 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {lab.is_abnormal ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        <AlertTriangle className="h-3 w-3 mr-1" />
-                        Abnormal
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        Normal
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(lab.test_date || lab.upload_date).toLocaleDateString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <button
-                      onClick={() => reExtractLabData(lab.record_id)}
-                      disabled={extracting}
-                      className="text-medical-600 hover:text-medical-900 disabled:opacity-50"
-                      title="Re-extract lab data"
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 };
