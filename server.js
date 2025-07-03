@@ -990,7 +990,11 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
 
     console.log(`AI analysis completed for record ${recordId}`);
 
-    // Store the comprehensive analysis
+    // Store the comprehensive analysis with proper JSON validation
+    const numericalData = analysis.lab_tests_found ? JSON.stringify(analysis.lab_tests_found) : '[]';
+    const trendsData = analysis.trend_analysis ? JSON.stringify(analysis.trend_analysis) : '{}';
+    const recommendationsData = analysis.recommendations ? JSON.stringify(analysis.recommendations) : '[]';
+    
     await pool.query(`
       INSERT INTO ai_lab_analysis 
       (user_id, record_id, analysis_type, test_name, summary, numerical_data, trends, recommendations, risk_level, confidence_score)
@@ -1000,10 +1004,10 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
       recordId,
       'comprehensive',
       'all_tests',
-      analysis.document_summary,
-      JSON.stringify(analysis.lab_tests_found),
-      JSON.stringify(analysis.trend_analysis),
-      JSON.stringify(analysis.recommendations),
+      analysis.document_summary || 'No summary available',
+      numericalData,
+      trendsData,
+      recommendationsData,
       analysis.risk_assessment?.overall_risk || 'unknown',
       0.9
     ]);
@@ -1069,14 +1073,25 @@ async function detectLabReport(text) {
       'reference', 'normal', 'abnormal', 'high', 'low', 'range'
     ];
 
+    const medicalKeywords = [
+      'ecg', 'ekg', 'electrocardiogram', 'echocardiography', 'echo',
+      'ct scan', 'mri', 'x-ray', 'ultrasound', 'radiology',
+      'cardiology', 'cardiac', 'heart', 'pulse', 'rhythm',
+      'blood pressure', 'bp', 'systolic', 'diastolic',
+      'medical', 'clinical', 'diagnostic', 'examination',
+      'patient', 'physician', 'doctor', 'hospital', 'clinic'
+    ];
+
     const textLower = text.toLowerCase();
-    const matches = labKeywords.filter(keyword => textLower.includes(keyword));
+    const labMatches = labKeywords.filter(keyword => textLower.includes(keyword));
+    const medicalMatches = medicalKeywords.filter(keyword => textLower.includes(keyword));
     
-    console.log(`Lab report detection: Found ${matches.length} lab keywords`);
-    console.log('Matched keywords:', matches);
+    console.log(`Lab report detection: Found ${labMatches.length} lab keywords, ${medicalMatches.length} medical keywords`);
+    console.log('Lab keywords:', labMatches);
+    console.log('Medical keywords:', medicalMatches);
     
-    // More sensitive detection - if 2 or more lab keywords found, consider it a lab report
-    return matches.length >= 2;
+    // Consider it a medical document if it has lab keywords OR medical keywords
+    return labMatches.length >= 1 || medicalMatches.length >= 2;
   } catch (error) {
     console.error('Error detecting lab report:', error);
     return false;
@@ -1461,12 +1476,30 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
     }
     
     const analysis = result.rows[0];
-    res.json({
-      ...analysis,
-      numerical_data: analysis.numerical_data ? JSON.parse(analysis.numerical_data) : [],
-      trends: analysis.trends ? JSON.parse(analysis.trends) : {},
-      recommendations: analysis.recommendations ? JSON.parse(analysis.recommendations) : []
-    });
+    
+    try {
+      res.json({
+        ...analysis,
+        numerical_data: analysis.numerical_data && analysis.numerical_data.trim() !== '' 
+          ? JSON.parse(analysis.numerical_data) 
+          : [],
+        trends: analysis.trends && analysis.trends.trim() !== '' 
+          ? JSON.parse(analysis.trends) 
+          : {},
+        recommendations: analysis.recommendations && analysis.recommendations.trim() !== '' 
+          ? JSON.parse(analysis.recommendations) 
+          : []
+      });
+    } catch (parseError) {
+      console.error('Error parsing JSON for analysis ID:', analysis.id, parseError);
+      // Return the analysis with default values if JSON parsing fails
+      res.json({
+        ...analysis,
+        numerical_data: [],
+        trends: {},
+        recommendations: []
+      });
+    }
   } catch (error) {
     console.error('Error fetching AI analysis:', error);
     return res.status(500).json({ error: 'Database error' });
@@ -1488,12 +1521,31 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
       ORDER BY ala.analysis_date DESC
     `, [req.user.id]);
     
-    const analyses = result.rows.map(row => ({
-      ...row,
-      numerical_data: row.numerical_data ? JSON.parse(row.numerical_data) : [],
-      trends: row.trends ? JSON.parse(row.trends) : {},
-      recommendations: row.recommendations ? JSON.parse(row.recommendations) : []
-    }));
+    const analyses = result.rows.map(row => {
+      try {
+        return {
+          ...row,
+          numerical_data: row.numerical_data && row.numerical_data.trim() !== '' 
+            ? JSON.parse(row.numerical_data) 
+            : [],
+          trends: row.trends && row.trends.trim() !== '' 
+            ? JSON.parse(row.trends) 
+            : {},
+          recommendations: row.recommendations && row.recommendations.trim() !== '' 
+            ? JSON.parse(row.recommendations) 
+            : []
+        };
+      } catch (parseError) {
+        console.error('Error parsing JSON for analysis ID:', row.id, parseError);
+        // Return the row with default values if JSON parsing fails
+        return {
+          ...row,
+          numerical_data: [],
+          trends: {},
+          recommendations: []
+        };
+      }
+    });
     
     res.json(analyses);
   } catch (error) {
