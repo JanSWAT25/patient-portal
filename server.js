@@ -551,10 +551,10 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
     }
 
     // Verify user exists
-    const userStmt = pool.query(`
+    const userResult = await pool.query(`
       SELECT * FROM users WHERE id = $1
     `, [user_id]);
-    const user = userStmt.rows[0];
+    const user = userResult.rows[0];
     
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -594,22 +594,33 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
           filename: file.filename,
           original_name: file.originalname
         });
-        const stmt = pool.query(`
+
+        // Generate PDF analysis if OpenAI is available
+        let pdfAnalysis = null;
+        if (openai) {
+          try {
+            const openaiResponse = await openai.chat.completions.create({
+              model: "gpt-4",
+              messages: [
+                { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
+                { role: "user", content: extractedText.substring(0, 12000) }
+              ],
+              temperature: 0.1,
+              max_tokens: 2000
+            });
+            pdfAnalysis = openaiResponse.choices[0].message.content;
+          } catch (openaiError) {
+            console.error('OpenAI analysis failed:', openaiError);
+            pdfAnalysis = null;
+          }
+        }
+
+        const result = await pool.query(`
           INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           RETURNING id
-        `, [user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, await openai.chat.completions.create({
-          model: "gpt-4",
-          messages: [
-            { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
-            { role: "user", content: extractedText.substring(0, 12000) }
-          ],
-          temperature: 0.1,
-          max_tokens: 2000
-        }).then(response => response.data.choices[0].message.content)]);
-        const result = stmt.rows[0];
-
-        const recordId = result.id;
+        `, [user_id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, pdfAnalysis]);
+        const recordId = result.rows[0].id;
 
         // If it's a lab report, extract lab data
         if (isLabReport && openai) {
@@ -917,21 +928,22 @@ async function detectLabReport(text) {
 // Admin Routes
 
 // Get all users (admin only)
-app.get('/api/admin/users', authenticateToken, requireAdmin, (req, res) => {
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT id, username, email, full_name, role, created_at FROM users ORDER BY created_at DESC
     `);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching admin users:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get all records from all users (admin only)
-app.get('/api/admin/records', authenticateToken, requireAdmin, (req, res) => {
+app.get('/api/admin/records', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         pr.*,
         u.username,
@@ -941,16 +953,17 @@ app.get('/api/admin/records', authenticateToken, requireAdmin, (req, res) => {
       JOIN users u ON pr.user_id = u.id
       ORDER BY pr.upload_date DESC
     `);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching admin records:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get records for a specific user (admin only)
-app.get('/api/admin/users/:userId/records', authenticateToken, requireAdmin, (req, res) => {
+app.get('/api/admin/users/:userId/records', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         pr.*,
         u.username,
@@ -961,14 +974,15 @@ app.get('/api/admin/users/:userId/records', authenticateToken, requireAdmin, (re
       WHERE pr.user_id = $1
       ORDER BY pr.upload_date DESC
     `, [req.params.userId]);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching user records:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Update user role (admin only)
-app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, (req, res) => {
+app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async (req, res) => {
   const { role } = req.body;
   
   if (!role || !['admin', 'user'].includes(role)) {
@@ -976,35 +990,36 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, (req, 
   }
 
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       UPDATE users SET role = $1 WHERE id = $2
     `, [role, req.params.userId]);
     
-    if (stmt.rowCount === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     
     res.json({ message: 'User role updated successfully' });
   } catch (error) {
+    console.error('Error updating user role:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Delete user (admin only)
-app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, res) => {
+app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     // First delete all lab values for this user
-    const deleteLabValues = pool.query(`
+    await pool.query(`
       DELETE FROM lab_values WHERE user_id = $1
     `, [req.params.userId]);
     
     // Then delete all records for this user
-    const deleteRecords = pool.query(`
+    await pool.query(`
       DELETE FROM pdf_records WHERE user_id = $1
     `, [req.params.userId]);
     
     // Then delete the user
-    const deleteUser = pool.query(`
+    const deleteUser = await pool.query(`
       DELETE FROM users WHERE id = $1
     `, [req.params.userId]);
     
@@ -1014,6 +1029,7 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, re
     
     res.json({ message: 'User and all associated records deleted successfully' });
   } catch (error) {
+    console.error('Error deleting user:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
