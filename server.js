@@ -1021,9 +1021,9 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, (req, re
 // Lab Data Routes
 
 // Get user's lab values
-app.get('/api/lab-values', authenticateToken, (req, res) => {
+app.get('/api/lab-values', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
@@ -1033,16 +1033,17 @@ app.get('/api/lab-values', authenticateToken, (req, res) => {
       WHERE lv.user_id = $1
       ORDER BY lv.test_date DESC, lv.extraction_date DESC
     `, [req.user.id]);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching lab values:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get lab values by test name (for trending)
-app.get('/api/lab-values/:testName', authenticateToken, (req, res) => {
+app.get('/api/lab-values/:testName', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
@@ -1052,28 +1053,30 @@ app.get('/api/lab-values/:testName', authenticateToken, (req, res) => {
       WHERE lv.user_id = $1 AND lv.test_name LIKE $2
       ORDER BY lv.test_date ASC, lv.extraction_date ASC
     `, [req.user.id, `%${req.params.testName}%`]);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching lab values by test name:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get lab categories
-app.get('/api/lab-categories', authenticateToken, (req, res) => {
+app.get('/api/lab-categories', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT * FROM lab_categories ORDER BY category_name
     `);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching lab categories:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get lab values by category
-app.get('/api/lab-values/category/:category', authenticateToken, (req, res) => {
+app.get('/api/lab-values/category/:category', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
@@ -1083,16 +1086,17 @@ app.get('/api/lab-values/category/:category', authenticateToken, (req, res) => {
       WHERE lv.user_id = $1 AND lv.test_category = $2
       ORDER BY lv.test_date DESC, lv.extraction_date DESC
     `, [req.user.id, req.params.category]);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching lab values by category:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get lab trends for a specific test
-app.get('/api/lab-values/trends/:testName', authenticateToken, (req, res) => {
+app.get('/api/lab-values/trends/:testName', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         lv.*,
         pr.original_name as record_name,
@@ -1103,39 +1107,40 @@ app.get('/api/lab-values/trends/:testName', authenticateToken, (req, res) => {
       WHERE lv.user_id = $1 AND lv.test_name LIKE $2
       ORDER BY lv.test_date ASC, lv.extraction_date ASC
     `, [req.user.id, `%${req.params.testName}%`]);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching lab trends:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get lab analytics summary
-app.get('/api/lab-analytics/summary', authenticateToken, (req, res) => {
+app.get('/api/lab-analytics/summary', authenticateToken, async (req, res) => {
   try {
     // Get total lab values
-    const totalStmt = pool.query(`
+    const totalResult = await pool.query(`
       SELECT COUNT(*) as total FROM lab_values WHERE user_id = $1
     `, [req.user.id]);
-    const total = totalStmt.rows[0].total;
+    const total = totalResult.rows[0].total;
 
     // Get values by category
-    const categoryStmt = pool.query(`
+    const categoryResult = await pool.query(`
       SELECT test_category, COUNT(*) as count 
       FROM lab_values 
       WHERE user_id = $1 
       GROUP BY test_category
     `, [req.user.id]);
-    const categories = categoryStmt.rows;
+    const categories = categoryResult.rows;
 
     // Get abnormal values
-    const abnormalStmt = pool.query(`
+    const abnormalResult = await pool.query(`
       SELECT COUNT(*) as count FROM lab_values 
       WHERE user_id = $1 AND is_abnormal = TRUE
     `, [req.user.id]);
-    const abnormal = abnormalStmt.rows[0].count;
+    const abnormal = abnormalResult.rows[0].count;
 
     // Get recent trends (last 30 days)
-    const recentStmt = pool.query(`
+    const recentResult = await pool.query(`
       SELECT lv.test_name, lv.value, lv.unit, lv.test_date, pr.upload_date
       FROM lab_values lv
       LEFT JOIN pdf_records pr ON lv.record_id = pr.id
@@ -1144,7 +1149,7 @@ app.get('/api/lab-analytics/summary', authenticateToken, (req, res) => {
       ORDER BY lv.extraction_date DESC
       LIMIT 20
     `, [req.user.id]);
-    const recent = recentStmt.rows;
+    const recent = recentResult.rows;
 
     res.json({
       total_lab_values: total,
@@ -1153,22 +1158,24 @@ app.get('/api/lab-analytics/summary', authenticateToken, (req, res) => {
       recent_trends: recent
     });
   } catch (error) {
+    console.error('Error fetching lab analytics summary:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get all available test names for a user
-app.get('/api/lab-values/test-names', authenticateToken, (req, res) => {
+app.get('/api/lab-values/test-names', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT DISTINCT test_name, test_category, COUNT(*) as count
       FROM lab_values 
       WHERE user_id = $1
       GROUP BY test_name, test_category
       ORDER BY count DESC, test_name ASC
     `, [req.user.id]);
-    res.json(stmt.rows);
+    res.json(result.rows);
   } catch (error) {
+    console.error('Error fetching test names:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
@@ -1177,17 +1184,17 @@ app.get('/api/lab-values/test-names', authenticateToken, (req, res) => {
 app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res) => {
   try {
     // Get the record
-    const recordStmt = pool.query(`
+    const recordResult = await pool.query(`
       SELECT * FROM pdf_records WHERE id = $1 AND user_id = $2
     `, [req.params.recordId, req.user.id]);
-    const record = recordStmt.rows[0];
+    const record = recordResult.rows[0];
     
     if (!record) {
       return res.status(404).json({ error: 'Record not found' });
     }
 
     // Delete existing lab values for this record
-    const deleteStmt = pool.query(`
+    await pool.query(`
       DELETE FROM lab_values WHERE record_id = $1
     `, [req.params.recordId]);
 
@@ -1202,14 +1209,15 @@ app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res
       res.status(400).json({ error: 'OpenAI API key not configured' });
     }
   } catch (error) {
+    console.error('Error re-extracting lab data:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });
 
 // Get lab trends grouped by record_type and test_name
-app.get('/api/lab-values/grouped-trends', authenticateToken, (req, res) => {
+app.get('/api/lab-values/grouped-trends', authenticateToken, async (req, res) => {
   try {
-    const stmt = pool.query(`
+    const result = await pool.query(`
       SELECT 
         pr.record_type,
         lv.test_name,
@@ -1225,7 +1233,7 @@ app.get('/api/lab-values/grouped-trends', authenticateToken, (req, res) => {
       WHERE lv.user_id = $1
       ORDER BY pr.record_type, lv.test_name, lv.test_date ASC, lv.extraction_date ASC
     `, [req.user.id]);
-    const rows = stmt.rows;
+    const rows = result.rows;
     // Group by record_type and test_name
     const grouped = {};
     for (const row of rows) {
@@ -1235,6 +1243,7 @@ app.get('/api/lab-values/grouped-trends', authenticateToken, (req, res) => {
     }
     res.json(grouped);
   } catch (error) {
+    console.error('Error fetching grouped trends:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });

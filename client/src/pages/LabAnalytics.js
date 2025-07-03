@@ -10,7 +10,9 @@ import {
   Clock,
   BarChart3,
   LineChart,
-  Target
+  Target,
+  TrendingDown,
+  Minus
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -27,11 +29,18 @@ const LabAnalytics = () => {
   const [analyticsSummary, setAnalyticsSummary] = useState(null);
   const [availableTests, setAvailableTests] = useState([]);
   const [groupedTrends, setGroupedTrends] = useState({});
+  const [selectedTrendTest, setSelectedTrendTest] = useState('');
 
   useEffect(() => {
     fetchLabData();
     fetchGroupedTrends();
   }, []);
+
+  useEffect(() => {
+    if (selectedTrendTest) {
+      fetchTrendData(selectedTrendTest);
+    }
+  }, [selectedTrendTest]);
 
   const fetchLabData = async () => {
     try {
@@ -120,20 +129,35 @@ const LabAnalytics = () => {
     .sort((a, b) => new Date(b.test_date || b.upload_date) - new Date(a.test_date || a.upload_date))
     .slice(0, 5);
 
-  const StatCard = ({ title, value, icon: Icon, color, subtitle }) => (
+  const StatCard = ({ title, value, icon: Icon, color, subtitle, trend }) => (
     <div className={`bg-white p-6 rounded-lg shadow-md border-l-4 ${color}`}>
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-gray-600">{title}</p>
           <p className="text-2xl font-bold text-gray-900">{value}</p>
           {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
+          {trend && (
+            <div className="flex items-center mt-2">
+              {trend > 0 ? (
+                <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
+              ) : trend < 0 ? (
+                <TrendingDown className="h-4 w-4 text-red-500 mr-1" />
+              ) : (
+                <Minus className="h-4 w-4 text-gray-500 mr-1" />
+              )}
+              <span className={`text-sm ${trend > 0 ? 'text-green-600' : trend < 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                {Math.abs(trend)}% from last month
+              </span>
+            </div>
+          )}
         </div>
         <Icon className="h-8 w-8 text-gray-400" />
       </div>
     </div>
   );
 
-  const TrendChart = ({ data, testName }) => {
+  // Enhanced trend chart with reference ranges
+  const EnhancedTrendChart = ({ data, testName }) => {
     if (!data || data.length === 0) {
       return (
         <div className="text-center py-8 text-gray-500">
@@ -144,13 +168,104 @@ const LabAnalytics = () => {
 
     const sortedData = data.sort((a, b) => new Date(a.test_date || a.extraction_date) - new Date(b.test_date || b.extraction_date));
     
+    // Calculate reference range if available
+    const referenceRanges = sortedData
+      .map(d => d.reference_range)
+      .filter(Boolean)
+      .map(range => {
+        const match = range.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)/);
+        return match ? { min: parseFloat(match[1]), max: parseFloat(match[2]) } : null;
+      })
+      .filter(Boolean);
+    
+    const avgReference = referenceRanges.length > 0 ? {
+      min: referenceRanges.reduce((sum, r) => sum + r.min, 0) / referenceRanges.length,
+      max: referenceRanges.reduce((sum, r) => sum + r.max, 0) / referenceRanges.length
+    } : null;
+
+    const values = sortedData.map(d => Number(d.value));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min;
+
     return (
       <div className="bg-white rounded-lg shadow-md p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
           <TrendingUp className="h-5 w-5 mr-2 text-medical-600" />
           {testName} Trend
         </h3>
-        <div className="space-y-4">
+        
+        {/* Chart */}
+        <div className="mb-6">
+          <svg width="100%" height="200" className="border-b border-gray-200">
+            {/* Reference range zone */}
+            {avgReference && (
+              <rect
+                x="0"
+                y={200 - ((avgReference.max - min) / range) * 180}
+                width="100%"
+                height={((avgReference.max - avgReference.min) / range) * 180}
+                fill="#f0f9ff"
+                opacity="0.5"
+              />
+            )}
+            
+            {/* Trend line */}
+            <polyline
+              fill="none"
+              stroke="#0ea5e9"
+              strokeWidth="3"
+              points={sortedData.map((d, i) => {
+                const x = (i / (sortedData.length - 1)) * 95 + 2.5;
+                const y = 190 - ((Number(d.value) - min) / range) * 180;
+                return `${x},${y}`;
+              }).join(' ')}
+            />
+            
+            {/* Data points */}
+            {sortedData.map((d, i) => {
+              const x = (i / (sortedData.length - 1)) * 95 + 2.5;
+              const y = 190 - ((Number(d.value) - min) / range) * 180;
+              return (
+                <circle
+                  key={i}
+                  cx={x}
+                  cy={y}
+                  r="4"
+                  fill={d.is_abnormal ? "#ef4444" : "#10b981"}
+                  stroke="white"
+                  strokeWidth="2"
+                />
+              );
+            })}
+            
+            {/* Y-axis labels */}
+            <text x="0" y="195" fontSize="10" fill="#888">{min}</text>
+            <text x="0" y="15" fontSize="10" fill="#888">{max}</text>
+            {avgReference && (
+              <>
+                <text x="0" y={200 - ((avgReference.max - min) / range) * 180 + 10} fontSize="10" fill="#0ea5e9">
+                  {avgReference.max}
+                </text>
+                <text x="0" y={200 - ((avgReference.min - min) / range) * 180 + 10} fontSize="10" fill="#0ea5e9">
+                  {avgReference.min}
+                </text>
+              </>
+            )}
+          </svg>
+          
+          {/* Reference range info */}
+          {avgReference && (
+            <div className="text-center mt-2">
+              <span className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                Normal Range: {avgReference.min.toFixed(1)} - {avgReference.max.toFixed(1)} {data[0]?.unit}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Data table */}
+        <div className="space-y-3">
           {sortedData.map((item, index) => (
             <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
               <div className="flex items-center space-x-4">
@@ -178,34 +293,79 @@ const LabAnalytics = () => {
   // Simple SVG line chart for trends
   const SimpleLineChart = ({ data, testName }) => {
     if (!data || data.length < 2) return <div className="text-gray-500">Not enough data for a trend graph.</div>;
+    
     // Sort by date
     const sorted = [...data].sort((a, b) => new Date(a.test_date || a.upload_date) - new Date(b.test_date || b.upload_date));
     const values = sorted.map(d => Number(d.value));
     const min = Math.min(...values);
     const max = Math.max(...values);
+    const range = max - min;
+    
     const points = values.map((v, i) => {
       const x = (i / (values.length - 1)) * 180 + 10;
-      const y = 90 - ((v - min) / (max - min || 1)) * 70;
+      const y = 90 - ((v - min) / range) * 70;
       return `${x},${y}`;
     }).join(' ');
+    
     return (
-      <svg width="200" height="100" className="my-2">
-        <polyline
-          fill="none"
-          stroke="#0ea5e9"
-          strokeWidth="2"
-          points={points}
-        />
-        {/* Dots */}
-        {values.map((v, i) => {
-          const x = (i / (values.length - 1)) * 180 + 10;
-          const y = 90 - ((v - min) / (max - min || 1)) * 70;
-          return <circle key={i} cx={x} cy={y} r="3" fill="#0ea5e9" />;
-        })}
-        {/* Min/Max labels */}
-        <text x="0" y="95" fontSize="10" fill="#888">{min}</text>
-        <text x="170" y="95" fontSize="10" fill="#888" textAnchor="end">{max}</text>
-      </svg>
+      <div className="relative">
+        <svg width="200" height="100" className="my-2">
+          {/* Reference range if available */}
+          {sorted[0]?.reference_range && (() => {
+            const rangeMatch = sorted[0].reference_range.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)/);
+            if (rangeMatch) {
+              const refMin = parseFloat(rangeMatch[1]);
+              const refMax = parseFloat(rangeMatch[2]);
+              const y1 = 90 - ((refMin - min) / range) * 70;
+              const y2 = 90 - ((refMax - min) / range) * 70;
+              return (
+                <rect
+                  x="0"
+                  y={Math.min(y1, y2)}
+                  width="200"
+                  height={Math.abs(y2 - y1)}
+                  fill="#f0f9ff"
+                  opacity="0.5"
+                />
+              );
+            }
+            return null;
+          })()}
+          
+          <polyline
+            fill="none"
+            stroke="#0ea5e9"
+            strokeWidth="2"
+            points={points}
+          />
+          
+          {/* Dots */}
+          {values.map((v, i) => {
+            const x = (i / (values.length - 1)) * 180 + 10;
+            const y = 90 - ((v - min) / range) * 70;
+            return (
+              <circle 
+                key={i} 
+                cx={x} 
+                cy={y} 
+                r="3" 
+                fill={sorted[i].is_abnormal ? "#ef4444" : "#10b981"} 
+              />
+            );
+          })}
+          
+          {/* Min/Max labels */}
+          <text x="0" y="95" fontSize="10" fill="#888">{min}</text>
+          <text x="170" y="95" fontSize="10" fill="#888" textAnchor="end">{max}</text>
+        </svg>
+        
+        {/* Reference range label */}
+        {sorted[0]?.reference_range && (
+          <div className="text-xs text-blue-600 text-center mt-1">
+            Normal: {sorted[0].reference_range}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -222,7 +382,7 @@ const LabAnalytics = () => {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Lab Analytics</h1>
         <p className="mt-2 text-gray-600">
-          Track your laboratory values over time and monitor trends
+          Track your laboratory values over time and monitor trends with AI-powered insights
         </p>
       </div>
 
@@ -443,31 +603,57 @@ const LabAnalytics = () => {
 
       {viewMode === 'trends' && (
         <div className="space-y-8">
-          {Object.keys(groupedTrends).length === 0 && (
-            <div className="text-gray-500">No lab trend data available.</div>
+          {/* Test selector for detailed trend view */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Select Test for Detailed Trend</h3>
+            <select
+              value={selectedTrendTest}
+              onChange={(e) => setSelectedTrendTest(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-medical-500 w-full md:w-64"
+            >
+              <option value="">Choose a test...</option>
+              {testNames.map(testName => (
+                <option key={testName} value={testName}>
+                  {testName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Detailed trend chart */}
+          {selectedTrendTest && (
+            <EnhancedTrendChart data={trendData} testName={selectedTrendTest} />
           )}
-          {Object.entries(groupedTrends).map(([recordType, tests]) => (
-            <div key={recordType} className="bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                <LineChart className="h-5 w-5 mr-2 text-medical-600" />
-                {recordType || 'Unknown Record Type'}
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {Object.entries(tests).map(([testName, data]) => (
-                  <div key={testName} className="p-4 border border-gray-200 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-medium text-gray-900">{testName}</h4>
-                      <span className="text-xs text-gray-500">{data.length} pts</span>
+
+          {/* Grouped trends overview */}
+          <div className="space-y-6">
+            <h3 className="text-xl font-semibold text-gray-900">All Test Trends</h3>
+            {Object.keys(groupedTrends).length === 0 && (
+              <div className="text-gray-500">No lab trend data available.</div>
+            )}
+            {Object.entries(groupedTrends).map(([recordType, tests]) => (
+              <div key={recordType} className="bg-white rounded-lg shadow-md p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                  <LineChart className="h-5 w-5 mr-2 text-medical-600" />
+                  {recordType || 'Unknown Record Type'}
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {Object.entries(tests).map(([testName, data]) => (
+                    <div key={testName} className="p-4 border border-gray-200 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-medium text-gray-900">{testName}</h4>
+                        <span className="text-xs text-gray-500">{data.length} pts</span>
+                      </div>
+                      <SimpleLineChart data={data} testName={testName} />
+                      <div className="text-xs text-gray-500 mt-2">
+                        {data[data.length-1]?.unit}
+                      </div>
                     </div>
-                    <SimpleLineChart data={data} testName={testName} />
-                    <div className="text-xs text-gray-500 mt-2">
-                      {data[data.length-1]?.unit}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 
