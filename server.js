@@ -13,6 +13,7 @@ const { Pool } = require('pg');
 const mammoth = require('mammoth');
 const fetch = require('node-fetch');
 const { config } = require('dotenv');
+const { google } = require('googleapis');
 
 config();
 
@@ -23,6 +24,10 @@ const CURSOR_API_ENDPOINT = process.env.CURSOR_API_ENDPOINT;
 // Claude (Anthropic) API config
 const CLAUDEAI_API_KEY = process.env.CLAUDEAI_API_KEY;
 const CLAUDEAI_API_ENDPOINT = process.env.CLAUDEAI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages';
+
+// Google Drive config
+const GOOGLE_DRIVE_CREDENTIALS_JSON = process.env.GOOGLE_DRIVE_CREDENTIALS_JSON;
+const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -46,6 +51,16 @@ console.log('NODE_ENV:', process.env.NODE_ENV);
 const pool = new Pool({ 
   connectionString: process.env.DATABASE_URL
 });
+
+let driveAuth, drive;
+if (GOOGLE_DRIVE_CREDENTIALS_JSON && GOOGLE_DRIVE_FOLDER_ID) {
+  const credentials = JSON.parse(GOOGLE_DRIVE_CREDENTIALS_JSON);
+  driveAuth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+  drive = google.drive({ version: 'v3', auth: driveAuth });
+}
 
 // Initialize database tables
 async function initializeDatabase() {
@@ -468,112 +483,54 @@ async function analyzeWithClaudeAI(prompt) {
 }
 
 // Upload PDF endpoint
-app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, res) => {
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  if (!drive || !GOOGLE_DRIVE_FOLDER_ID) {
+    return res.status(500).json({ error: 'Google Drive not configured' });
+  }
   try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'No files uploaded' });
-    }
-
-    let record_type = req.body.record_type;
-    if (Array.isArray(record_type)) {
-      record_type = record_type[0];
-    }
-    const results = [];
-    const errors = [];
-
-    // Process each file
-    for (const file of req.files) {
-      try {
-        const filePath = file.path;
-        const fileSize = file.size;
-
-        // Extract text from PDF or DOCX
-        let extractedText = '';
-        if (file.mimetype === 'application/pdf') {
-          const dataBuffer = fs.readFileSync(filePath);
-          const pdfData = await pdfParse(dataBuffer);
-          extractedText = pdfData.text;
-        } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-          const docxBuffer = fs.readFileSync(filePath);
-          const result = await mammoth.extractRawText({ buffer: docxBuffer });
-          extractedText = result.value;
-        } else {
-          extractedText = '';
-        }
-        console.log('Extracted text:', extractedText.substring(0, 500)); // Log first 500 chars for debugging
-
-        // Detect if this is a lab report
-        const isLabReport = await detectLabReport(extractedText);
-        const isLabReportInt = isLabReport ? 1 : 0;
-
-        // Store in database
-        console.log('Attempting to insert pdf record:', {
-          user_id: req.user.id,
-          uploaded_by: req.user.id,
-          filename: file.filename,
-          original_name: file.originalname
-        });
-
-        // Generate PDF analysis if Claude is available
-        let pdfAnalysis = null;
-        if (CLAUDEAI_API_KEY) {
-          try {
-            pdfAnalysis = await analyzeWithClaudeAI(extractedText.substring(0, 12000));
-          } catch (claudeError) {
-            console.error('Claude analysis failed:', claudeError);
-            pdfAnalysis = null;
-          }
-        }
-
-        const result = await pool.query(`
-          INSERT INTO pdf_records (user_id, uploaded_by, filename, original_name, file_path, file_size, record_type, extracted_data, is_lab_report, pdf_analysis) 
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          RETURNING id
-        `, [req.user.id, req.user.id, file.filename, file.originalname, filePath, fileSize, record_type, extractedText, isLabReportInt, pdfAnalysis]);
-        const recordId = result.rows[0].id;
-
-        // Always perform AI analysis for medical documents
-        if (CLAUDEAI_API_KEY) {
-          try {
-            await analyzeLabDataWithAI(extractedText, recordId, req.user.id, record_type);
-          } catch (error) {
-            console.error('AI analysis failed for file:', file.originalname, error);
-          }
-        }
-
-        results.push({
-          filename: file.originalname,
-          record_id: recordId,
-          is_lab_report: isLabReport,
-          status: 'success'
-        });
-      } catch (error) {
-        console.error('Error processing file:', file.originalname, error);
-        errors.push({
-          filename: file.originalname,
-          error: error.message,
-          status: 'failed'
-        });
-      }
-    }
-
-    // Return results
-    const response = {
-      message: `Processed ${req.files.length} files`,
-      successful: results.length,
-      failed: errors.length,
-      results: results,
-      errors: errors
+    const fileMetadata = {
+      name: req.file.originalname,
+      parents: [GOOGLE_DRIVE_FOLDER_ID],
     };
+    const media = {
+      mimeType: req.file.mimetype,
+      body: Buffer.from(req.file.buffer),
+    };
+    const response = await drive.files.create({
+      resource: fileMetadata,
+      media: {
+        mimeType: req.file.mimetype,
+        body: Buffer.from(req.file.buffer),
+      },
+      fields: 'id,webViewLink,webContentLink',
+    });
+    // Optionally, set file permissions to anyone with the link can view
+    await drive.permissions.create({
+      fileId: response.data.id,
+      requestBody: {
+        role: 'reader',
+        type: 'anyone',
+      },
+    });
+    res.json({
+      id: response.data.id,
+      webViewLink: response.data.webViewLink,
+      webContentLink: response.data.webContentLink,
+    });
+  } catch (err) {
+    console.error('Drive upload error:', err);
+    res.status(500).json({ error: 'Upload failed' });
+  }
+});
 
-    if (errors.length > 0) {
-      res.status(207).json(response); // 207 Multi-Status
-    } else {
-      res.status(201).json(response);
-    }
-  } catch (error) {
-    console.error('PDF processing error:', error);
-    res.status(500).json({ error: 'PDF processing failed' });
+// Google Drive download endpoint (redirect to Google Drive link)
+app.get('/api/download/:id', async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const url = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    res.redirect(url);
+  } catch (err) {
+    res.status(500).json({ error: 'Download failed' });
   }
 });
 
