@@ -911,7 +911,7 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
       : 'No previous lab data available for comparison.';
 
     const prompt = `
-    You are an advanced medical AI analyst. Analyze the following medical document and provide comprehensive insights.
+    You are an advanced medical AI analyst specializing in patient-friendly lab result interpretation. Analyze the following medical document and provide comprehensive insights that are easy for patients to understand.
 
     DOCUMENT TO ANALYZE:
     ${text.substring(0, 15000)}
@@ -924,7 +924,13 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
     Please provide a comprehensive analysis in the following JSON format:
 
     {
-      "document_summary": "Brief summary of what this document contains",
+      "document_summary": "Patient-friendly summary of what this document contains in simple language",
+      "patient_summary": {
+        "overall_health_status": "Simple assessment of overall health (Good/Fair/Concerning)",
+        "key_points": ["3-5 main points in simple language for the patient"],
+        "what_this_means": "Explanation of what these results mean for the patient's health",
+        "next_steps": ["Clear, actionable next steps for the patient"]
+      },
       "lab_tests_found": [
         {
           "test_name": "Exact test name",
@@ -934,8 +940,11 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
           "reference_range": "normal range if available",
           "is_abnormal": boolean,
           "test_date": "YYYY-MM-DD if found",
-          "interpretation": "What this value means",
-          "trend": "improving/declining/stable/unknown compared to previous data"
+          "interpretation": "What this value means in simple terms",
+          "patient_explanation": "Simple explanation for the patient about what this test measures and what their result means",
+          "trend": "improving/declining/stable/unknown compared to previous data",
+          "is_graphable": boolean,
+          "graph_type": "line/bar/pie/scatter for bloodwork elements, chemicals, metals"
         }
       ],
       "medical_measurements": [
@@ -947,17 +956,78 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
           "reference_range": "normal range if available",
           "is_abnormal": boolean,
           "measurement_date": "YYYY-MM-DD if found",
-          "interpretation": "What this measurement means",
-          "trend": "improving/declining/stable/unknown compared to previous data"
+          "interpretation": "What this measurement means in simple terms",
+          "patient_explanation": "Simple explanation for the patient about what this measurement means",
+          "trend": "improving/declining/stable/unknown compared to previous data",
+          "is_graphable": boolean,
+          "graph_type": "line/bar/pie/scatter"
         }
       ],
+      "non_data_content": {
+        "clinical_notes": ["Extract any clinical notes, observations, or comments from healthcare providers"],
+        "impressions": ["Extract radiologist impressions, clinical impressions, or diagnostic impressions"],
+        "recommendations": ["Extract any medical recommendations or follow-up instructions"],
+        "diagnoses": ["Extract any diagnoses mentioned"],
+        "medications": ["Extract any medications mentioned or prescribed"],
+        "procedures": ["Extract any procedures performed or recommended"]
+      },
+      "bloodwork_analysis": {
+        "elements": [
+          {
+            "element_name": "Name of blood element (e.g., Hemoglobin, Iron, Calcium, Sodium, Potassium)",
+            "element_type": "mineral/vitamin/protein/hormone/electrolyte",
+            "value": numeric_value,
+            "unit": "unit",
+            "reference_range": "normal range",
+            "is_abnormal": boolean,
+            "patient_meaning": "What this element means for the patient's health",
+            "graph_data": {
+              "chart_type": "line/bar",
+              "category": "blood_elements",
+              "color": "hex_color_code"
+            }
+          }
+        ],
+        "chemicals": [
+          {
+            "chemical_name": "Name of chemical (e.g., Glucose, Creatinine, BUN, Bilirubin)",
+            "chemical_type": "metabolic/liver/kidney/cardiac",
+            "value": numeric_value,
+            "unit": "unit",
+            "reference_range": "normal range",
+            "is_abnormal": boolean,
+            "patient_meaning": "What this chemical means for the patient's health",
+            "graph_data": {
+              "chart_type": "line/bar",
+              "category": "chemicals",
+              "color": "hex_color_code"
+            }
+          }
+        ],
+        "metals": [
+          {
+            "metal_name": "Name of metal (e.g., Iron, Zinc, Copper, Lead, Mercury)",
+            "metal_type": "essential/toxic/trace",
+            "value": numeric_value,
+            "unit": "unit",
+            "reference_range": "normal range",
+            "is_abnormal": boolean,
+            "patient_meaning": "What this metal means for the patient's health",
+            "graph_data": {
+              "chart_type": "line/bar",
+              "category": "metals",
+              "color": "hex_color_code"
+            }
+          }
+        ]
+      },
       "key_findings": [
-        "List of important findings from the document"
+        "List of important findings from the document in patient-friendly language"
       ],
       "risk_assessment": {
         "overall_risk": "low/medium/high",
-        "risk_factors": ["List of risk factors identified"],
-        "recommendations": ["List of recommendations based on findings"]
+        "risk_factors": ["List of risk factors identified in simple terms"],
+        "recommendations": ["List of recommendations based on findings in patient-friendly language"]
       },
       "trend_analysis": {
         "improving_measurements": ["Measurements showing improvement"],
@@ -965,8 +1035,8 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
         "stable_measurements": ["Measurements remaining stable"],
         "new_abnormalities": ["New abnormal findings"]
       },
-      "comparison_insights": "Analysis of how current results compare to previous data",
-      "action_items": ["Specific actions the patient should consider"],
+      "comparison_insights": "Analysis of how current results compare to previous data in simple terms",
+      "action_items": ["Specific actions the patient should consider in clear language"],
       "graph_data": {
         "chartable_values": [
           {
@@ -974,7 +1044,54 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
             "value": numeric_value,
             "date": "YYYY-MM-DD",
             "category": "Chart category",
-            "unit": "unit"
+            "unit": "unit",
+            "chart_type": "line/bar/pie/scatter",
+            "color": "hex_color_code"
+          }
+        ],
+        "bloodwork_charts": [
+          {
+            "chart_title": "Blood Elements Overview",
+            "chart_type": "bar",
+            "data": [
+              {
+                "name": "Element name",
+                "value": numeric_value,
+                "unit": "unit",
+                "is_abnormal": boolean,
+                "color": "hex_color_code"
+              }
+            ]
+          }
+        ],
+        "chemical_charts": [
+          {
+            "chart_title": "Chemical Profile",
+            "chart_type": "line",
+            "data": [
+              {
+                "name": "Chemical name",
+                "value": numeric_value,
+                "unit": "unit",
+                "is_abnormal": boolean,
+                "color": "hex_color_code"
+              }
+            ]
+          }
+        ],
+        "metal_charts": [
+          {
+            "chart_title": "Metal Levels",
+            "chart_type": "bar",
+            "data": [
+              {
+                "name": "Metal name",
+                "value": numeric_value,
+                "unit": "unit",
+                "is_abnormal": boolean,
+                "color": "hex_color_code"
+              }
+            ]
           }
         ]
       }
@@ -992,11 +1109,15 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
        - Any quantitative findings
     4. Compare current findings with previous data when available
     5. Identify trends, improvements, or concerning changes
-    6. Provide actionable recommendations
+    6. Provide actionable recommendations in patient-friendly language
     7. Assess overall health risk level
-    8. Create chartable data for graphs
+    8. Create chartable data for graphs, especially for bloodwork elements, chemicals, and metals
     9. Be thorough but concise in analysis
     10. Focus on measurements that can be tracked over time
+    11. Extract non-data content like clinical notes, impressions, and recommendations
+    12. Provide simple, clear explanations that patients can understand
+    13. Categorize bloodwork into elements, chemicals, and metals for better visualization
+    14. Generate appropriate graph types for different data categories
 
     CRITICAL: Return ONLY valid JSON. Do not include any explanatory text, introductions, or conclusions. Start with { and end with }. Do not say "As an AI" or any other text.
     `;
@@ -1046,6 +1167,9 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
     const trendsData = analysis.trend_analysis ? JSON.stringify(analysis.trend_analysis) : '{}';
     const recommendationsData = analysis.recommendations ? JSON.stringify(analysis.recommendations) : '[]';
     const graphData = analysis.graph_data ? JSON.stringify(analysis.graph_data) : '{}';
+    const patientSummaryData = analysis.patient_summary ? JSON.stringify(analysis.patient_summary) : '{}';
+    const nonDataContentData = analysis.non_data_content ? JSON.stringify(analysis.non_data_content) : '{}';
+    const bloodworkAnalysisData = analysis.bloodwork_analysis ? JSON.stringify(analysis.bloodwork_analysis) : '{}';
     
     await pool.query(`
       INSERT INTO ai_lab_analysis 
@@ -1060,7 +1184,10 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
       JSON.stringify({
         lab_tests: analysis.lab_tests_found || [],
         medical_measurements: analysis.medical_measurements || [],
-        graph_data: analysis.graph_data || {}
+        graph_data: analysis.graph_data || {},
+        patient_summary: analysis.patient_summary || {},
+        non_data_content: analysis.non_data_content || {},
+        bloodwork_analysis: analysis.bloodwork_analysis || {}
       }),
       trendsData,
       recommendationsData,
@@ -1539,7 +1666,14 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
     const analysis = result.rows[0];
     
     try {
-      let parsedNumericalData = { lab_tests: [], medical_measurements: [], graph_data: {} };
+      let parsedNumericalData = { 
+        lab_tests: [], 
+        medical_measurements: [], 
+        graph_data: {},
+        patient_summary: {},
+        non_data_content: {},
+        bloodwork_analysis: {}
+      };
       
       // Handle both string and JSONB types
       if (analysis.numerical_data) {
@@ -1582,6 +1716,9 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
         lab_tests: parsedNumericalData.lab_tests || [],
         medical_measurements: parsedNumericalData.medical_measurements || [],
         graph_data: parsedNumericalData.graph_data || {},
+        patient_summary: parsedNumericalData.patient_summary || {},
+        non_data_content: parsedNumericalData.non_data_content || {},
+        bloodwork_analysis: parsedNumericalData.bloodwork_analysis || {},
         trends: parsedTrends,
         recommendations: parsedRecommendations
       });
@@ -1590,10 +1727,20 @@ app.get('/api/ai-analysis/:recordId', authenticateToken, async (req, res) => {
       // Return the analysis with default values if JSON parsing fails
       res.json({
         ...analysis,
-        numerical_data: { lab_tests: [], medical_measurements: [], graph_data: {} },
+        numerical_data: { 
+          lab_tests: [], 
+          medical_measurements: [], 
+          graph_data: {},
+          patient_summary: {},
+          non_data_content: {},
+          bloodwork_analysis: {}
+        },
         lab_tests: [],
         medical_measurements: [],
         graph_data: {},
+        patient_summary: {},
+        non_data_content: {},
+        bloodwork_analysis: {},
         trends: {},
         recommendations: []
       });
@@ -1621,7 +1768,14 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
     
     const analyses = result.rows.map(row => {
       try {
-        let parsedNumericalData = { lab_tests: [], medical_measurements: [], graph_data: {} };
+        let parsedNumericalData = { 
+          lab_tests: [], 
+          medical_measurements: [], 
+          graph_data: {},
+          patient_summary: {},
+          non_data_content: {},
+          bloodwork_analysis: {}
+        };
         
         // Handle both string and JSONB types
         if (row.numerical_data) {
@@ -1664,6 +1818,9 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
           lab_tests: parsedNumericalData.lab_tests || [],
           medical_measurements: parsedNumericalData.medical_measurements || [],
           graph_data: parsedNumericalData.graph_data || {},
+          patient_summary: parsedNumericalData.patient_summary || {},
+          non_data_content: parsedNumericalData.non_data_content || {},
+          bloodwork_analysis: parsedNumericalData.bloodwork_analysis || {},
           trends: parsedTrends,
           recommendations: parsedRecommendations
         };
@@ -1672,10 +1829,20 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
         // Return the row with default values if JSON parsing fails
         return {
           ...row,
-          numerical_data: { lab_tests: [], medical_measurements: [], graph_data: {} },
+          numerical_data: { 
+            lab_tests: [], 
+            medical_measurements: [], 
+            graph_data: {},
+            patient_summary: {},
+            non_data_content: {},
+            bloodwork_analysis: {}
+          },
           lab_tests: [],
           medical_measurements: [],
           graph_data: {},
+          patient_summary: {},
+          non_data_content: {},
+          bloodwork_analysis: {},
           trends: {},
           recommendations: []
         };
@@ -1685,6 +1852,59 @@ app.get('/api/ai-analysis', authenticateToken, async (req, res) => {
     res.json(analyses);
   } catch (error) {
     console.error('Error fetching AI analyses:', error);
+    return res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Get bloodwork analysis specifically
+app.get('/api/bloodwork-analysis', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        ala.numerical_data,
+        pr.original_name as record_name,
+        pr.record_type,
+        pr.upload_date
+      FROM ai_lab_analysis ala
+      LEFT JOIN pdf_records pr ON ala.record_id = pr.id
+      WHERE ala.user_id = $1
+      ORDER BY ala.analysis_date DESC
+    `, [req.user.id]);
+    
+    const bloodworkData = result.rows.map(row => {
+      try {
+        let parsedNumericalData = { bloodwork_analysis: {} };
+        
+        if (row.numerical_data) {
+          if (typeof row.numerical_data === 'string') {
+            if (row.numerical_data.trim() !== '') {
+              parsedNumericalData = JSON.parse(row.numerical_data);
+            }
+          } else {
+            parsedNumericalData = row.numerical_data;
+          }
+        }
+        
+        return {
+          record_name: row.record_name,
+          record_type: row.record_type,
+          upload_date: row.upload_date,
+          bloodwork_analysis: parsedNumericalData.bloodwork_analysis || {}
+        };
+      } catch (parseError) {
+        console.error('Error parsing bloodwork data:', parseError);
+        return {
+          record_name: row.record_name,
+          record_type: row.record_type,
+          upload_date: row.upload_date,
+          bloodwork_analysis: {}
+        };
+      }
+    });
+    
+    res.json(bloodworkData);
+  } catch (error) {
+    console.error('Error fetching bloodwork analysis:', error);
     return res.status(500).json({ error: 'Database error' });
   }
 });

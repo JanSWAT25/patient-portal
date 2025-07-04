@@ -139,7 +139,12 @@ const LabAnalytics = () => {
   );
 
   const AIAnalysisCard = ({ analysis }) => {
-    const numericalData = analysis.numerical_data || [];
+    const numericalData = analysis.numerical_data || {};
+    const labTests = numericalData.lab_tests || [];
+    const medicalMeasurements = numericalData.medical_measurements || [];
+    const patientSummary = numericalData.patient_summary || {};
+    const nonDataContent = numericalData.non_data_content || {};
+    const bloodworkAnalysis = numericalData.bloodwork_analysis || {};
     const trends = analysis.trends || {};
     const recommendations = analysis.recommendations || [];
 
@@ -172,15 +177,74 @@ const LabAnalytics = () => {
           </div>
         )}
 
+        {/* Patient Summary */}
+        {patientSummary.overall_health_status && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-gray-900 mb-2 flex items-center">
+              <Heart className="h-4 w-4 mr-2" />
+              Your Health Summary
+            </h4>
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <div className="mb-3">
+                <span className="text-sm font-medium text-blue-800">Overall Health Status: </span>
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ml-2 ${
+                  patientSummary.overall_health_status === 'Good' ? 'bg-green-100 text-green-800' :
+                  patientSummary.overall_health_status === 'Fair' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-red-100 text-red-800'
+                }`}>
+                  {patientSummary.overall_health_status}
+                </span>
+              </div>
+              
+              {patientSummary.what_this_means && (
+                <div className="mb-3">
+                  <p className="text-sm text-blue-800">
+                    <span className="font-medium">What this means: </span>
+                    {patientSummary.what_this_means}
+                  </p>
+                </div>
+              )}
+              
+              {patientSummary.key_points && patientSummary.key_points.length > 0 && (
+                <div className="mb-3">
+                  <p className="text-sm font-medium text-blue-800 mb-2">Key Points:</p>
+                  <ul className="text-sm text-blue-700 space-y-1">
+                    {patientSummary.key_points.map((point, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-blue-600 mr-2">•</span>
+                        <span>{point}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              
+              {patientSummary.next_steps && patientSummary.next_steps.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium text-blue-800 mb-2">Next Steps:</p>
+                  <ul className="text-sm text-blue-700 space-y-1">
+                    {patientSummary.next_steps.map((step, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-blue-600 mr-2">→</span>
+                        <span>{step}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Lab Tests Found */}
-        {numericalData.length > 0 && (
+        {labTests.length > 0 && (
           <div className="mb-6">
             <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center">
               <BarChart3 className="h-4 w-4 mr-2" />
-              Lab Tests ({numericalData.length})
+              Lab Tests ({labTests.length})
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {numericalData.map((test, index) => (
+              {labTests.map((test, index) => (
                 <div key={index} className={`p-3 rounded-lg border ${test.is_abnormal ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
                   <div className="flex items-center justify-between">
                     <div>
@@ -196,6 +260,9 @@ const LabAnalytics = () => {
                       )}
                     </div>
                   </div>
+                  {test.patient_explanation && (
+                    <p className="text-xs text-gray-600 mt-2">{test.patient_explanation}</p>
+                  )}
                   {test.trend && (
                     <div className="flex items-center mt-2">
                       {getTrendIcon(test.trend)}
@@ -246,12 +313,176 @@ const LabAnalytics = () => {
           </div>
         )}
 
+        {/* Bloodwork Analysis Charts */}
+        {(bloodworkAnalysis.elements?.length > 0 || bloodworkAnalysis.chemicals?.length > 0 || bloodworkAnalysis.metals?.length > 0) && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center">
+              <BarChart3 className="h-4 w-4 mr-2" />
+              Bloodwork Analysis
+            </h4>
+            
+            {/* Blood Elements */}
+            {bloodworkAnalysis.elements?.length > 0 && (
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-2">Blood Elements</h5>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {bloodworkAnalysis.elements.map((element, index) => (
+                      <div key={index} className={`p-3 rounded-lg border ${element.is_abnormal ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-sm text-gray-900">{element.element_name}</p>
+                            <p className="text-xs text-gray-600">{element.element_type}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`font-bold text-sm ${element.is_abnormal ? 'text-red-600' : 'text-green-600'}`}>
+                              {element.value} {element.unit}
+                            </p>
+                            {element.reference_range && (
+                              <p className="text-xs text-gray-500">Ref: {element.reference_range}</p>
+                            )}
+                          </div>
+                        </div>
+                        {element.patient_meaning && (
+                          <p className="text-xs text-gray-600 mt-2">{element.patient_meaning}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Chemicals */}
+            {bloodworkAnalysis.chemicals?.length > 0 && (
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-2">Chemical Profile</h5>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {bloodworkAnalysis.chemicals.map((chemical, index) => (
+                      <div key={index} className={`p-3 rounded-lg border ${chemical.is_abnormal ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-sm text-gray-900">{chemical.chemical_name}</p>
+                            <p className="text-xs text-gray-600">{chemical.chemical_type}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`font-bold text-sm ${chemical.is_abnormal ? 'text-red-600' : 'text-green-600'}`}>
+                              {chemical.value} {chemical.unit}
+                            </p>
+                            {chemical.reference_range && (
+                              <p className="text-xs text-gray-500">Ref: {chemical.reference_range}</p>
+                            )}
+                          </div>
+                        </div>
+                        {chemical.patient_meaning && (
+                          <p className="text-xs text-gray-600 mt-2">{chemical.patient_meaning}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Metals */}
+            {bloodworkAnalysis.metals?.length > 0 && (
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-2">Metal Levels</h5>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {bloodworkAnalysis.metals.map((metal, index) => (
+                      <div key={index} className={`p-3 rounded-lg border ${metal.is_abnormal ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-sm text-gray-900">{metal.metal_name}</p>
+                            <p className="text-xs text-gray-600">{metal.metal_type}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`font-bold text-sm ${metal.is_abnormal ? 'text-red-600' : 'text-green-600'}`}>
+                              {metal.value} {metal.unit}
+                            </p>
+                            {metal.reference_range && (
+                              <p className="text-xs text-gray-500">Ref: {metal.reference_range}</p>
+                            )}
+                          </div>
+                        </div>
+                        {metal.patient_meaning && (
+                          <p className="text-xs text-gray-600 mt-2">{metal.patient_meaning}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Non-Data Content */}
+        {nonDataContent.clinical_notes?.length > 0 || nonDataContent.impressions?.length > 0 || nonDataContent.recommendations?.length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center">
+              <FileText className="h-4 w-4 mr-2" />
+              Clinical Notes & Impressions
+            </h4>
+            
+            {nonDataContent.clinical_notes?.length > 0 && (
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-2">Clinical Notes</h5>
+                <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+                  <ul className="text-sm text-yellow-800 space-y-1">
+                    {nonDataContent.clinical_notes.map((note, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-yellow-600 mr-2">•</span>
+                        <span>{note}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {nonDataContent.impressions?.length > 0 && (
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-2">Impressions</h5>
+                <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
+                  <ul className="text-sm text-purple-800 space-y-1">
+                    {nonDataContent.impressions.map((impression, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-purple-600 mr-2">•</span>
+                        <span>{impression}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {nonDataContent.recommendations?.length > 0 && (
+              <div className="mb-4">
+                <h5 className="text-sm font-medium text-gray-900 mb-2">Medical Recommendations</h5>
+                <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                  <ul className="text-sm text-green-800 space-y-1">
+                    {nonDataContent.recommendations.map((rec, index) => (
+                      <li key={index} className="flex items-start">
+                        <span className="text-green-600 mr-2">→</span>
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Recommendations */}
         {recommendations.length > 0 && (
           <div className="mb-6">
             <h4 className="text-md font-semibold text-gray-900 mb-3 flex items-center">
               <Lightbulb className="h-4 w-4 mr-2" />
-              Recommendations
+              AI Recommendations
             </h4>
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
               <ul className="space-y-2">
@@ -310,6 +541,51 @@ const LabAnalytics = () => {
                 />
                 <div className="text-xs text-gray-500 mt-1 text-center">
                   {point.value}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const BloodworkChart = ({ data, title, type = 'bar' }) => {
+    if (!data || data.length === 0) {
+      return null;
+    }
+
+    const maxValue = Math.max(...data.map(item => Number(item.value) || 0));
+    const minValue = Math.min(...data.map(item => Number(item.value) || 0));
+    const range = maxValue - minValue;
+
+    return (
+      <div className="bg-white rounded-lg shadow-md p-4 mb-4">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">{title}</h3>
+        <div className="space-y-3">
+          {data.map((item, index) => {
+            const value = Number(item.value) || 0;
+            const percentage = range > 0 ? ((value - minValue) / range) * 100 : 50;
+            const color = item.is_abnormal ? '#ef4444' : '#0ea5e9';
+            
+            return (
+              <div key={index} className="flex items-center space-x-3">
+                <div className="w-24 text-sm font-medium text-gray-900 truncate">
+                  {item.name}
+                </div>
+                <div className="flex-1 bg-gray-200 rounded-full h-4">
+                  <div
+                    className="h-4 rounded-full transition-all duration-300"
+                    style={{
+                      width: `${percentage}%`,
+                      backgroundColor: color
+                    }}
+                  />
+                </div>
+                <div className="w-16 text-right">
+                  <div className={`text-sm font-bold ${item.is_abnormal ? 'text-red-600' : 'text-green-600'}`}>
+                    {item.value} {item.unit}
+                  </div>
                 </div>
               </div>
             );
@@ -445,6 +721,65 @@ const LabAnalytics = () => {
           {selectedTest && (
             <div className="mb-8">
               <SimpleTrendChart data={labValues.filter(lab => lab.test_name === selectedTest)} testName={selectedTest} />
+            </div>
+          )}
+
+          {/* Bloodwork Charts */}
+          {aiAnalyses.length > 0 && (
+            <div className="mb-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Bloodwork Charts</h3>
+              {aiAnalyses.map((analysis) => {
+                const bloodworkAnalysis = analysis.numerical_data?.bloodwork_analysis || {};
+                const graphData = analysis.numerical_data?.graph_data || {};
+                
+                return (
+                  <div key={analysis.id} className="mb-6">
+                    <h4 className="text-md font-medium text-gray-900 mb-3">{analysis.record_name}</h4>
+                    
+                    {/* Blood Elements Chart */}
+                    {bloodworkAnalysis.elements?.length > 0 && (
+                      <BloodworkChart
+                        data={bloodworkAnalysis.elements.map(el => ({
+                          name: el.element_name,
+                          value: el.value,
+                          unit: el.unit,
+                          is_abnormal: el.is_abnormal
+                        }))}
+                        title="Blood Elements"
+                        type="bar"
+                      />
+                    )}
+
+                    {/* Chemicals Chart */}
+                    {bloodworkAnalysis.chemicals?.length > 0 && (
+                      <BloodworkChart
+                        data={bloodworkAnalysis.chemicals.map(chem => ({
+                          name: chem.chemical_name,
+                          value: chem.value,
+                          unit: chem.unit,
+                          is_abnormal: chem.is_abnormal
+                        }))}
+                        title="Chemical Profile"
+                        type="line"
+                      />
+                    )}
+
+                    {/* Metals Chart */}
+                    {bloodworkAnalysis.metals?.length > 0 && (
+                      <BloodworkChart
+                        data={bloodworkAnalysis.metals.map(metal => ({
+                          name: metal.metal_name,
+                          value: metal.value,
+                          unit: metal.unit,
+                          is_abnormal: metal.is_abnormal
+                        }))}
+                        title="Metal Levels"
+                        type="bar"
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
