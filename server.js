@@ -10,16 +10,19 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { Pool } = require('pg');
-const OpenAI = require('openai');
 const mammoth = require('mammoth');
+const fetch = require('node-fetch');
+const { config } = require('dotenv');
 
-// Initialize OpenAI (optional)
-let openai = null;
-if (process.env.OPENAI_API_KEY) {
-  openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-}
+config();
+
+// Cursor AI config (placeholder)
+const CURSOR_API_KEY = process.env.CURSOR_API_KEY;
+const CURSOR_API_ENDPOINT = process.env.CURSOR_API_ENDPOINT;
+
+// Claude (Anthropic) API config
+const CLAUDEAI_API_KEY = process.env.CLAUDEAI_API_KEY;
+const CLAUDEAI_API_ENDPOINT = process.env.CLAUDEAI_API_ENDPOINT || 'https://api.anthropic.com/v1/messages';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -435,6 +438,35 @@ app.post('/api/reset-password', async (req, res) => {
   }
 });
 
+// Helper to call Claude API
+async function analyzeWithClaudeAI(prompt) {
+  if (!CLAUDEAI_API_KEY) {
+    throw new Error('Claude API key not configured');
+  }
+  const response = await fetch(CLAUDEAI_API_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': CLAUDEAI_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-3-opus-20240229',
+      max_tokens: 3000,
+      temperature: 0.1,
+      messages: [
+        { role: 'user', content: prompt }
+      ]
+    })
+  });
+  if (!response.ok) {
+    throw new Error('Claude API error: ' + response.statusText);
+  }
+  const data = await response.json();
+  // Adjust this according to Claude's actual response format
+  return data.content?.[0]?.text || data.completion || JSON.stringify(data);
+}
+
 // Upload PDF endpoint
 app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, res) => {
   try {
@@ -468,6 +500,7 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
         } else {
           extractedText = '';
         }
+        console.log('Extracted text:', extractedText.substring(0, 500)); // Log first 500 chars for debugging
 
         // Detect if this is a lab report
         const isLabReport = await detectLabReport(extractedText);
@@ -481,22 +514,13 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
           original_name: file.originalname
         });
 
-        // Generate PDF analysis if OpenAI is available
+        // Generate PDF analysis if Claude is available
         let pdfAnalysis = null;
-        if (openai) {
+        if (CLAUDEAI_API_KEY) {
           try {
-            const openaiResponse = await openai.chat.completions.create({
-              model: "gpt-4",
-              messages: [
-                { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
-                { role: "user", content: extractedText.substring(0, 12000) }
-              ],
-              temperature: 0.1,
-              max_tokens: 2000
-            });
-            pdfAnalysis = openaiResponse.choices[0].message.content;
-          } catch (openaiError) {
-            console.error('OpenAI analysis failed:', openaiError);
+            pdfAnalysis = await analyzeWithClaudeAI(extractedText.substring(0, 12000));
+          } catch (claudeError) {
+            console.error('Claude analysis failed:', claudeError);
             pdfAnalysis = null;
           }
         }
@@ -509,7 +533,7 @@ app.post('/api/upload', authenticateToken, upload.array('pdf', 10), async (req, 
         const recordId = result.rows[0].id;
 
         // Always perform AI analysis for medical documents
-        if (openai) {
+        if (CLAUDEAI_API_KEY) {
           try {
             await analyzeLabDataWithAI(extractedText, recordId, req.user.id, record_type);
           } catch (error) {
@@ -602,6 +626,7 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
         } else {
           extractedText = '';
         }
+        console.log('Extracted text:', extractedText.substring(0, 500)); // Log first 500 chars for debugging
 
         // Detect if this is a lab report
         const isLabReport = await detectLabReport(extractedText);
@@ -615,22 +640,13 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
           original_name: file.originalname
         });
 
-        // Generate PDF analysis if OpenAI is available
+        // Generate PDF analysis if Claude is available
         let pdfAnalysis = null;
-        if (openai) {
+        if (CLAUDEAI_API_KEY) {
           try {
-            const openaiResponse = await openai.chat.completions.create({
-              model: "gpt-4",
-              messages: [
-                { role: "system", content: "You are a medical data extraction specialist. Extract all relevant medical and lab data from the following document. Return a JSON object with a summary, lab values, and any other relevant information." },
-                { role: "user", content: extractedText.substring(0, 12000) }
-              ],
-              temperature: 0.1,
-              max_tokens: 2000
-            });
-            pdfAnalysis = openaiResponse.choices[0].message.content;
-          } catch (openaiError) {
-            console.error('OpenAI analysis failed:', openaiError);
+            pdfAnalysis = await analyzeWithClaudeAI(extractedText.substring(0, 12000));
+          } catch (claudeError) {
+            console.error('Claude analysis failed:', claudeError);
             pdfAnalysis = null;
           }
         }
@@ -643,7 +659,7 @@ app.post('/api/admin/upload', authenticateToken, requireAdmin, upload.array('pdf
         const recordId = result.rows[0].id;
 
         // Always perform AI analysis for medical documents
-        if (openai) {
+        if (CLAUDEAI_API_KEY) {
           try {
             await analyzeLabDataWithAI(extractedText, recordId, user_id, record_type);
           } catch (error) {
@@ -790,10 +806,12 @@ app.get('/api/records/:id', authenticateToken, async (req, res) => {
 
 // Serve PDF files
 app.get('/api/pdf/:filename', (req, res) => {
-  const filePath = path.join(__dirname, 'uploads', req.params.filename);
-  
+  const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+  const filePath = path.join(uploadDir, req.params.filename);
+  console.log('Download request for:', filePath);
   // Verify file exists
   if (!fs.existsSync(filePath)) {
+    console.error('File not found:', filePath);
     return res.status(404).json({ error: 'File not found' });
   }
 
@@ -880,11 +898,6 @@ function extractNumericalData(text) {
 
 // AI-powered comprehensive lab analysis
 async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
-  if (!openai) {
-    console.log('OpenAI not configured - skipping AI lab analysis');
-    return null;
-  }
-
   try {
     console.log(`Starting AI analysis for record ${recordId}`);
     
@@ -1122,23 +1135,14 @@ async function analyzeLabDataWithAI(text, recordId, userId, recordType = null) {
     CRITICAL: Return ONLY valid JSON. Do not include any explanatory text, introductions, or conclusions. Start with { and end with }. Do not say "As an AI" or any other text.
     `;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        {
-          role: "system",
-          content: "You are an advanced medical AI analyst. You must respond with ONLY valid JSON. Do not include any text before or after the JSON. Do not explain, introduce, or conclude. Just return the JSON object."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      temperature: 0.1,
-      max_tokens: 3000
-    });
-
-    const response = completion.choices[0].message.content;
+    let response;
+    if (CLAUDEAI_API_KEY) {
+      // Use Claude AI
+      console.log('Using Claude AI for analysis...');
+      response = await analyzeWithClaudeAI(prompt);
+    } else {
+      throw new Error('No Claude AI provider configured');
+    }
     
     // Clean the response to extract only JSON
     let jsonResponse = response;
@@ -1633,7 +1637,7 @@ app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res
     `, [req.params.recordId]);
 
     // Re-analyze with AI
-    if (openai) {
+    if (CLAUDEAI_API_KEY) {
       const analysis = await analyzeLabDataWithAI(record.extracted_data, req.params.recordId, req.user.id, record.record_type);
       res.json({ 
         message: 'Document re-analyzed successfully',
@@ -1641,7 +1645,7 @@ app.post('/api/lab-values/extract/:recordId', authenticateToken, async (req, res
         summary: analysis?.document_summary
       });
     } else {
-      res.status(400).json({ error: 'OpenAI API key not configured' });
+      res.status(400).json({ error: 'Claude API key not configured' });
     }
   } catch (error) {
     console.error('Error re-analyzing document:', error);
